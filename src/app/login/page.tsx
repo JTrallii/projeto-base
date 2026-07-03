@@ -8,7 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import Layout from "@/components/ui/Layout";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import { Card, CardHeader, CardBody } from "@/components/ui/Card";
+import { Card, CardHeader, CardBody } from "@/components/ui/card";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
