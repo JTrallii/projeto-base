@@ -1,57 +1,84 @@
-import * as React from "react"
-import { Slot } from "@radix-ui/react-slot"
-import { cva, type VariantProps } from "class-variance-authority"
+"use client";
 
-import { cn } from "@/lib/utils"
+import { forwardRef, type ButtonHTMLAttributes } from "react";
+import { cn } from "@/lib/utils";
 
-const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
-  {
-    variants: {
-      variant: {
-        default:
-          "bg-primary text-primary-foreground shadow hover:bg-primary/90",
-        destructive:
-          "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90",
-        outline:
-          "border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground",
-        secondary:
-          "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
-        link: "text-primary underline-offset-4 hover:underline",
-      },
-      size: {
-        default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-10 rounded-md px-8",
-        icon: "h-9 w-9",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-      size: "default",
-    },
-  }
-)
-
-export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {
-  asChild?: boolean
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: "primary" | "secondary" | "outline" | "ghost" | "danger";
+  size?: "sm" | "md" | "lg";
+  isLoading?: boolean;
 }
 
-const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
-    const Comp = asChild ? Slot : "button"
-    return (
-      <Comp
-        className={cn(buttonVariants({ variant, size, className }))}
-        ref={ref}
-        {...props}
-      />
-    )
-  }
-)
-Button.displayName = "Button"
+const Button = forwardRef<HTMLButtonElement, ButtonProps>(
+  (
+    {
+      className,
+      variant = "primary",
+      size = "md",
+      isLoading = false,
+      disabled,
+      children,
+      ...props
+    },
+    ref
+  ) => {
+    const base =
+      "inline-flex items-center justify-center rounded-xl font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[#0b1120] disabled:opacity-50 disabled:pointer-events-none";
 
-export { Button, buttonVariants }
+    const variants = {
+      primary:
+        "bg-gradient-to-r from-[#38bdf8] to-[#a855f7] text-white hover:opacity-90 shadow-lg shadow-[#38bdf8]/20 focus:ring-[#a855f7]",
+      secondary:
+        "bg-white/10 backdrop-blur-sm border border-white/20 text-white hover:bg-white/20 focus:ring-white/30",
+      outline:
+        "bg-transparent border-2 border-[#38bdf8] text-[#38bdf8] hover:bg-[#38bdf8]/10 focus:ring-[#38bdf8]",
+      ghost:
+        "bg-transparent text-white/70 hover:text-white hover:bg-white/10 focus:ring-white/30",
+      danger:
+        "bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30 focus:ring-red-500",
+    };
+
+    const sizes = {
+      sm: "h-9 px-4 text-sm gap-1.5",
+      md: "h-11 px-6 text-base gap-2",
+      lg: "h-13 px-8 text-lg gap-2.5",
+    };
+
+    return (
+      <button
+        ref={ref}
+        disabled={disabled || isLoading}
+        className={cn(base, variants[variant], sizes[size], className)}
+        {...props}
+      >
+        {isLoading && (
+          <svg
+            className="animate-spin -ml-1 h-4 w-4"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+            />
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+          </svg>
+        )}
+        {children}
+      </button>
+    );
+  }
+);
+
+Button.displayName = "Button";
+
+export default Button;

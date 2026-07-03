@@ -1,22 +1,58 @@
-import * as React from "react"
+"use client";
 
-import { cn } from "@/lib/utils"
+import { forwardRef, type InputHTMLAttributes } from "react";
+import { cn } from "@/lib/utils";
 
-const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
-  ({ className, type, ...props }, ref) => {
+interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+  label?: string;
+  error?: string;
+  icon?: React.ReactNode;
+}
+
+const Input = forwardRef<HTMLInputElement, InputProps>(
+  ({ className, label, error, icon, id, type, ...props }, ref) => {
+    const inputId = id || label?.toLowerCase().replace(/\s+/g, "-");
+
     return (
-      <input
-        type={type}
-        className={cn(
-          "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
-          className
+      <div className="space-y-1.5">
+        {label && (
+          <label
+            htmlFor={inputId}
+            className="block text-sm font-medium text-white/80"
+          >
+            {label}
+          </label>
         )}
-        ref={ref}
-        {...props}
-      />
-    )
+        <div className="relative">
+          {icon && (
+            <div className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-white/40">
+              {icon}
+            </div>
+          )}
+          <input
+            ref={ref}
+            id={inputId}
+            type={type}
+            className={cn(
+              "w-full rounded-xl bg-white/10 backdrop-blur-sm border border-white/20 px-4 py-2.5 text-white placeholder:text-white/30 outline-none transition-all",
+              "focus:border-[#38bdf8] focus:ring-1 focus:ring-[#38bdf8]/50",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+              icon && "pl-11",
+              error &&
+                "border-red-500/50 focus:border-red-500 focus:ring-red-500/50",
+              className
+            )}
+            {...props}
+          />
+        </div>
+        {error && (
+          <p className="text-sm text-red-400 mt-1">{error}</p>
+        )}
+      </div>
+    );
   }
-)
-Input.displayName = "Input"
+);
 
-export { Input }
+Input.displayName = "Input";
+
+export default Input;
