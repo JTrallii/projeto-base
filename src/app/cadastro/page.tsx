@@ -3,55 +3,61 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Mail, Lock, User, Eye, EyeOff } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
+import { Mail, Lock, Eye, EyeOff, User } from "lucide-react";
+import { toast } from "sonner";
+import { register } from "@/actions/register";
 import Layout from "@/components/ui/Layout";
 import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
-import { Card, CardHeader, CardBody } from "@/components/ui/Card";
-import { toast } from "sonner";
+import Input from "@/components/ui/input";
+import { Card, CardHeader, CardBody } from "@/components/ui/card";
 
 export default function CadastroPage() {
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const { register } = useAuth();
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [generalError, setGeneralError] = useState<string>("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const router = useRouter();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setError("");
-
-    if (!name || !email || !password || !confirmPassword) {
-      setError("Preencha todos os campos.");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError("As senhas não conferem.");
-      return;
-    }
-
-    if (password.length < 6) {
-      setError("A senha deve ter pelo menos 6 caracteres.");
-      return;
-    }
-
     setLoading(true);
-    const result = await register(email, password, name);
+    setFieldErrors({});
+    setGeneralError("");
+
+    const formData = new FormData(e.currentTarget);
+    const password = formData.get("password") as string;
+    const confirmPassword = formData.get("confirmPassword") as string;
+
+    // Validação de senhas iguais (frontend)
+    if (password !== confirmPassword) {
+      setFieldErrors({ confirmPassword: "As senhas não coincidem." });
+      setLoading(false);
+      toast.error("As senhas não coincidem.");
+      return;
+    }
+
+    const result = await register(formData);
+
     setLoading(false);
 
-    if (result.error) {
-      setError(result.error);
-    } else {
-      toast.success("Conta criada com sucesso! Verifique seu email.");
-      setTimeout(() => router.push("/login"), 2000);
+    if (result.success) {
+      toast.success("Conta criada com sucesso! Faça login.");
+      setTimeout(() => router.push("/login?registered=true"), 2000);
+      return;
     }
-  };
+
+    if (result.errors) {
+      setFieldErrors(result.errors);
+      toast.error("Preencha todos os campos corretamente.");
+      return;
+    }
+
+    if (result.message) {
+      setGeneralError(result.message);
+      toast.error(result.message);
+    }
+  }
 
   return (
     <Layout>
@@ -67,28 +73,28 @@ export default function CadastroPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <Input
                 label="Nome"
+                name="nome"
                 type="text"
                 placeholder="Seu nome"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
                 icon={<User size={16} />}
+                error={fieldErrors.nome}
               />
               <Input
                 label="Email"
+                name="email"
                 type="email"
                 placeholder="seu@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
                 icon={<Mail size={16} />}
+                error={fieldErrors.email}
               />
               <div className="relative">
                 <Input
                   label="Senha"
+                  name="password"
                   type={showPassword ? "text" : "password"}
                   placeholder="Mínimo 6 caracteres"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
                   icon={<Lock size={16} />}
+                  error={fieldErrors.password}
                 />
                 <button
                   type="button"
@@ -98,18 +104,27 @@ export default function CadastroPage() {
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
-              <Input
-                label="Confirmar senha"
-                type="password"
-                placeholder="Repita a senha"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                icon={<Lock size={16} />}
-              />
+              <div className="relative">
+                <Input
+                  label="Confirmar senha"
+                  name="confirmPassword"
+                  type={showConfirmPassword ? "text" : "password"}
+                  placeholder="Repita a senha"
+                  icon={<Lock size={16} />}
+                  error={fieldErrors.confirmPassword}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-3 bottom-2.5 text-white/40 hover:text-white/70 transition-colors"
+                >
+                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
 
-              {error && (
+              {generalError && (
                 <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-2">
-                  {error}
+                  {generalError}
                 </p>
               )}
 
