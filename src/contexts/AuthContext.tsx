@@ -2,114 +2,213 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useState,
-  useCallback,
   type ReactNode,
 } from "react";
-import { createClient } from "@/lib/supabase";
+
+import {
+  loginAction,
+  logoutAction,
+  registerAction,
+} from "@/actions/auth";
+
 import type { User } from "@/types";
+
+type AuthOperationResult = {
+  error?: string;
+  retryAfterSeconds?: number;
+  requiresEmailConfirmation?: boolean;
+  message?: string;
+
+  fieldErrors?: Record<
+    string,
+    string[] | undefined
+  >;
+};
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<{ error?: string }>;
-  register: (
+
+  login: (
     email: string,
     password: string,
-    name: string
-  ) => Promise<{ error?: string }>;
-  logout: () => Promise<void>;
+    redirectTo?: string,
+  ) => Promise<AuthOperationResult>;
+
+  register: (
+    nome: string,
+    sobrenome: string,
+    email: string,
+    password: string,
+    confirmPassword: string,
+  ) => Promise<AuthOperationResult>;
+
+  logout: () => Promise<AuthOperationResult>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AuthContext =
+  createContext<
+    AuthContextType | undefined
+  >(undefined);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+type AuthProviderProps = {
+  children: ReactNode;
+  initialUser: User | null;
+};
 
-  const supabase = createClient();
+export function AuthProvider({
+  children,
+  initialUser,
+}: AuthProviderProps) {
+  const [user, setUser] =
+    useState<User | null>(
+      initialUser,
+    );
 
-  // Carrega sessão ao montar
+  /**
+   * Agora representa apenas uma operação
+   * de login, cadastro ou logout em andamento.
+   *
+   * O carregamento inicial já aconteceu
+   * no servidor.
+   */
+  const [isLoading, setIsLoading] =
+    useState(false);
+
+  /**
+   * Quando o servidor renderizar novamente
+   * o layout, sincroniza o novo usuário.
+   */
   useEffect(() => {
-    const getUser = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (session?.user) {
-        setUser({
-          id: session.user.id,
-          email: session.user.email!,
-          name: session.user.user_metadata?.name,
-          avatar_url: session.user.user_metadata?.avatar_url,
-          created_at: session.user.created_at,
-        });
-      }
-      setIsLoading(false);
-    };
-
-    getUser();
-
-    // Escuta mudanças de auth
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        setUser({
-          id: session.user.id,
-          email: session.user.email!,
-          name: session.user.user_metadata?.name,
-          avatar_url: session.user.user_metadata?.avatar_url,
-          created_at: session.user.created_at,
-        });
-      } else {
-        setUser(null);
-      }
-      setIsLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
-  }, [supabase]);
+    setUser(initialUser);
+  }, [initialUser]);
 
   const login = useCallback(
-    async (email: string, password: string) => {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (error) return { error: error.message };
-      return {};
+    async (
+      email: string,
+      password: string,
+      redirectTo?: string,
+    ): Promise<AuthOperationResult> => {
+      setIsLoading(true);
+
+      try {
+        const result =
+          await loginAction({
+            email,
+            password,
+            redirectTo,
+          });
+
+        /**
+         * Em caso de sucesso, loginAction
+         * redirecionará pelo servidor.
+         *
+         * Portanto, normalmente somente
+         * erros chegam neste ponto.
+         */
+        if (!result.ok) {
+          return {
+            error: result.message,
+            retryAfterSeconds:
+              result.retryAfterSeconds,
+          };
+        }
+
+        return {
+          message: result.message,
+        };
+      } finally {
+        setIsLoading(false);
+      }
     },
-    [supabase]
+    [],
   );
 
   const register = useCallback(
-    async (email: string, password: string, name: string) => {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { name } },
-      });
-      if (error) return { error: error.message };
-      return {};
-    },
-    [supabase]
-  );
+  async (
+    nome: string,
+    sobrenome: string,
+    email: string,
+    password: string,
+    confirmPassword: string,
+  ): Promise<AuthOperationResult> => {
+    setIsLoading(true);
 
-  const logout = useCallback(async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-  }, [supabase]);
+    try {
+      const result =
+        await registerAction({
+          nome,
+          sobrenome,
+          email,
+          password,
+          confirmPassword,
+        });
+
+      if (!result.ok) {
+        return {
+          error: result.message,
+
+          retryAfterSeconds:
+            result.retryAfterSeconds,
+
+          fieldErrors:
+            result.fieldErrors,
+        };
+      }
+
+      return {
+        message: result.message,
+
+        requiresEmailConfirmation:
+          result.requiresEmailConfirmation,
+      };
+    } finally {
+      setIsLoading(false);
+    }
+  },
+  [],
+);
+
+  const logout = useCallback(
+    async (): Promise<AuthOperationResult> => {
+      setIsLoading(true);
+
+      try {
+        const result =
+          await logoutAction();
+
+        /**
+         * Em caso de sucesso, a action
+         * redireciona para /login.
+         */
+        if (!result.ok) {
+          return {
+            error: result.message,
+          };
+        }
+
+        return {};
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [],
+  );
 
   return (
     <AuthContext.Provider
       value={{
         user,
         isLoading,
-        isAuthenticated: !!user,
+
+        isAuthenticated:
+          user !== null,
+
         login,
         register,
         logout,
@@ -121,9 +220,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 export function useAuth() {
-  const context = useContext(AuthContext);
+  const context =
+    useContext(AuthContext);
+
   if (!context) {
-    throw new Error("useAuth deve ser usado dentro de um AuthProvider");
+    throw new Error(
+      "useAuth deve ser usado dentro de um AuthProvider",
+    );
   }
+
   return context;
 }

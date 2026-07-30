@@ -1,129 +1,352 @@
 "use client";
 
-import { useState } from "react";
+import {
+  useState,
+  type FormEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Mail, Lock, Eye, EyeOff, User } from "lucide-react";
+import {
+  Mail,
+  Lock,
+  Eye,
+  EyeOff,
+  User,
+} from "lucide-react";
 import { toast } from "sonner";
-import { register } from "@/actions/register";
+
+import { useAuth } from "@/contexts/AuthContext";
 import Layout from "@/components/ui/Layout";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/input";
-import { Card, CardHeader, CardBody } from "@/components/ui/card";
+import {
+  Card,
+  CardHeader,
+  CardBody,
+} from "@/components/ui/card";
 
 export default function CadastroPage() {
-  const [loading, setLoading] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [generalError, setGeneralError] = useState<string>("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [loading, setLoading] =
+    useState(false);
+
+  const [fieldErrors, setFieldErrors] =
+    useState<Record<string, string>>(
+      {},
+    );
+
+  const [generalError, setGeneralError] =
+    useState("");
+
+  const [showPassword, setShowPassword] =
+    useState(false);
+
+  const [
+    showConfirmPassword,
+    setShowConfirmPassword,
+  ] = useState(false);
+
+  const { register } = useAuth();
   const router = useRouter();
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function handleSubmit(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+
     setLoading(true);
     setFieldErrors({});
     setGeneralError("");
 
-    const formData = new FormData(e.currentTarget);
-    const password = formData.get("password") as string;
-    const confirmPassword = formData.get("confirmPassword") as string;
+    try {
+      const formData =
+        new FormData(
+          event.currentTarget,
+        );
 
-    // Validação de senhas iguais (frontend)
-    if (password !== confirmPassword) {
-      setFieldErrors({ confirmPassword: "As senhas não coincidem." });
+      const nome = String(
+        formData.get("nome") ?? "",
+      );
+
+      const sobrenome = String(
+        formData.get("sobrenome") ?? "",
+      );
+
+      const email = String(
+        formData.get("email") ?? "",
+      );
+
+      const password = String(
+        formData.get("password") ?? "",
+      );
+
+      const confirmPassword = String(
+        formData.get(
+          "confirmPassword",
+        ) ?? "",
+      );
+
+      const result = await register(
+        nome,
+        sobrenome,
+        email,
+        password,
+        confirmPassword,
+      );
+
+      if (result.error) {
+        if (result.fieldErrors) {
+          const normalizedErrors:
+            Record<string, string> = {};
+
+          for (const [
+            field,
+            messages,
+          ] of Object.entries(
+            result.fieldErrors,
+          )) {
+            const firstMessage =
+              messages?.[0];
+
+            if (firstMessage) {
+              normalizedErrors[field] =
+                firstMessage;
+            }
+          }
+
+          setFieldErrors(
+            normalizedErrors,
+          );
+        }
+
+        const errorMessage =
+          result.retryAfterSeconds
+            ? `${result.error} Tente novamente em aproximadamente ${result.retryAfterSeconds} segundos.`
+            : result.error;
+
+        setGeneralError(
+          errorMessage,
+        );
+
+        toast.error(errorMessage);
+
+        return;
+      }
+
+      if (
+        result.requiresEmailConfirmation
+      ) {
+        toast.success(
+          result.message ??
+            "Verifique seu e-mail para confirmar o cadastro.",
+        );
+
+        router.push(
+          "/login?registered=true",
+        );
+
+        return;
+      }
+
+      if (result.message) {
+        toast.success(
+          result.message,
+        );
+      }
+    } catch (error) {
+      console.error(
+        "Erro inesperado durante o cadastro:",
+        error,
+      );
+
+      const message =
+        "Não foi possível concluir o cadastro. Tente novamente.";
+
+      setGeneralError(message);
+      toast.error(message);
+    } finally {
       setLoading(false);
-      toast.error("As senhas não coincidem.");
-      return;
-    }
-
-    const result = await register(formData);
-
-    setLoading(false);
-
-    if (result.success) {
-      toast.success("Conta criada com sucesso! Faça login.");
-      setTimeout(() => router.push("/login?registered=true"), 2000);
-      return;
-    }
-
-    if (result.errors) {
-      setFieldErrors(result.errors);
-      toast.error("Preencha todos os campos corretamente.");
-      return;
-    }
-
-    if (result.message) {
-      setGeneralError(result.message);
-      toast.error(result.message);
     }
   }
 
   return (
     <Layout>
       <div className="min-h-[calc(100vh-8rem)] flex items-center justify-center px-4">
-        <Card glass className="w-full max-w-md">
+        <Card
+          glass
+          className="w-full max-w-md"
+        >
           <CardHeader>
-            <h1 className="text-2xl font-bold text-white">Criar conta</h1>
+            <h1 className="text-2xl font-bold text-white">
+              Criar conta
+            </h1>
+
             <p className="text-sm text-white/50">
-              Preencha os dados para se cadastrar.
+              Preencha os dados para se
+              cadastrar.
             </p>
           </CardHeader>
+
           <CardBody>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form
+              onSubmit={handleSubmit}
+              className="space-y-4"
+            >
               <Input
                 label="Nome"
                 name="nome"
                 type="text"
                 placeholder="Seu nome"
-                icon={<User size={16} />}
-                error={fieldErrors.nome}
+                icon={
+                  <User size={16} />
+                }
+                error={
+                  fieldErrors.nome
+                }
+                autoComplete="given-name"
+                required
+                disabled={loading}
               />
+
+              <Input
+                label="Sobrenome"
+                name="sobrenome"
+                type="text"
+                placeholder="Seu sobrenome"
+                icon={
+                  <User size={16} />
+                }
+                error={
+                  fieldErrors.sobrenome
+                }
+                autoComplete="family-name"
+                required
+                disabled={loading}
+              />
+
               <Input
                 label="Email"
                 name="email"
                 type="email"
                 placeholder="seu@email.com"
-                icon={<Mail size={16} />}
-                error={fieldErrors.email}
+                icon={
+                  <Mail size={16} />
+                }
+                error={
+                  fieldErrors.email
+                }
+                autoComplete="email"
+                required
+                disabled={loading}
               />
+
               <div className="relative">
                 <Input
                   label="Senha"
                   name="password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Mínimo 6 caracteres"
-                  icon={<Lock size={16} />}
-                  error={fieldErrors.password}
+                  type={
+                    showPassword
+                      ? "text"
+                      : "password"
+                  }
+                  placeholder="Mínimo 12 caracteres"
+                  icon={
+                    <Lock size={16} />
+                  }
+                  error={
+                    fieldErrors.password
+                  }
+                  autoComplete="new-password"
+                  minLength={12}
+                  required
+                  disabled={loading}
                 />
+
                 <button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 bottom-2.5 text-white/40 hover:text-white/70 transition-colors"
+                  onClick={() =>
+                    setShowPassword(
+                      (current) =>
+                        !current,
+                    )
+                  }
+                  disabled={loading}
+                  aria-label={
+                    showPassword
+                      ? "Ocultar senha"
+                      : "Mostrar senha"
+                  }
+                  aria-pressed={
+                    showPassword
+                  }
+                  className="absolute right-3 bottom-2.5 text-white/40 hover:text-white/70 transition-colors disabled:opacity-50"
                 >
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  {showPassword ? (
+                    <EyeOff
+                      size={18}
+                    />
+                  ) : (
+                    <Eye size={18} />
+                  )}
                 </button>
               </div>
+
               <div className="relative">
                 <Input
                   label="Confirmar senha"
                   name="confirmPassword"
-                  type={showConfirmPassword ? "text" : "password"}
+                  type={
+                    showConfirmPassword
+                      ? "text"
+                      : "password"
+                  }
                   placeholder="Repita a senha"
-                  icon={<Lock size={16} />}
-                  error={fieldErrors.confirmPassword}
+                  icon={
+                    <Lock size={16} />
+                  }
+                  error={
+                    fieldErrors.confirmPassword
+                  }
+                  autoComplete="new-password"
+                  minLength={12}
+                  required
+                  disabled={loading}
                 />
+
                 <button
                   type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="absolute right-3 bottom-2.5 text-white/40 hover:text-white/70 transition-colors"
+                  onClick={() =>
+                    setShowConfirmPassword(
+                      (current) =>
+                        !current,
+                    )
+                  }
+                  disabled={loading}
+                  aria-label={
+                    showConfirmPassword
+                      ? "Ocultar confirmação de senha"
+                      : "Mostrar confirmação de senha"
+                  }
+                  aria-pressed={
+                    showConfirmPassword
+                  }
+                  className="absolute right-3 bottom-2.5 text-white/40 hover:text-white/70 transition-colors disabled:opacity-50"
                 >
-                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  {showConfirmPassword ? (
+                    <EyeOff
+                      size={18}
+                    />
+                  ) : (
+                    <Eye size={18} />
+                  )}
                 </button>
               </div>
 
               {generalError && (
-                <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-2">
+                <p
+                  role="alert"
+                  aria-live="polite"
+                  className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-2"
+                >
                   {generalError}
                 </p>
               )}
@@ -133,6 +356,7 @@ export default function CadastroPage() {
                 variant="primary"
                 className="w-full"
                 isLoading={loading}
+                disabled={loading}
               >
                 Criar conta
               </Button>
