@@ -15,6 +15,11 @@ const loginSchema = z.object({
 
   password: z.string().min(1, "Informe a senha").max(256, "Senha inválida"),
 
+  captchaToken: z
+    .string()
+    .min(1, "Conclua a verificação de segurança.")
+    .max(2048, "Token de segurança inválido."),
+
   redirectTo: z.string().max(500).optional(),
 });
 
@@ -41,12 +46,21 @@ const registerSchema = z
     password: z
       .string()
       .min(12, "A senha deve ter pelo menos 12 caracteres.")
-      .max(256, "A senha é muito longa."),
+      .max(256, "A senha é muito longa.")
+      .regex(/[a-z]/, "A senha deve conter uma letra minúscula.")
+      .regex(/[A-Z]/, "A senha deve conter uma letra maiúscula.")
+      .regex(/[0-9]/, "A senha deve conter um número.")
+      .regex(/[^A-Za-z0-9]/, "A senha deve conter um símbolo."),
 
     confirmPassword: z
       .string()
       .min(1, "Confirme sua senha.")
       .max(256, "A confirmação de senha é inválida."),
+
+    captchaToken: z
+      .string()
+      .min(1, "Conclua a verificação de segurança.")
+      .max(2048, "Token de segurança inválido."),
   })
   .superRefine((values, context) => {
     if (values.password !== values.confirmPassword) {
@@ -70,6 +84,7 @@ export type AuthActionResult =
       code:
         | "INVALID_INPUT"
         | "RATE_LIMITED"
+        | "CAPTCHA_FAILED"
         | "INVALID_CREDENTIALS"
         | "REGISTER_FAILED"
         | "LOGOUT_FAILED"
@@ -198,8 +213,37 @@ export async function loginAction(input: unknown): Promise<AuthActionResult> {
 
   const { error } = await supabase.auth.signInWithPassword({
     email,
+
     password: parsed.data.password,
+
+    options: {
+      captchaToken: parsed.data.captchaToken,
+    },
   });
+
+  if (error?.code === "captcha_failed") {
+    console.warn("Falha na verificação CAPTCHA", {
+      event: "auth.login.captcha_failed",
+    });
+
+    return {
+      ok: false,
+      code: "CAPTCHA_FAILED",
+      message: "A verificação de segurança expirou ou falhou. Tente novamente.",
+    };
+  }
+
+  if (error?.code === "over_request_rate_limit" || error?.status === 429) {
+    console.warn("Rate limit nativo do Supabase excedido", {
+      event: "auth.login.supabase_rate_limited",
+    });
+
+    return {
+      ok: false,
+      code: "RATE_LIMITED",
+      message: "Muitas tentativas. Aguarde e tente novamente.",
+    };
+  }
 
   if (error) {
     console.warn("Falha de autenticação", {
@@ -231,29 +275,20 @@ export async function registerAction(
   /*
    * 1. Validação completa no servidor.
    */
-  const parsed =
-    registerSchema.safeParse(input);
+  const parsed = registerSchema.safeParse(input);
 
   if (!parsed.success) {
     return {
       ok: false,
       code: "INVALID_INPUT",
-      message:
-        "Preencha os campos corretamente.",
-      fieldErrors:
-        parsed.error.flatten()
-          .fieldErrors,
+      message: "Preencha os campos corretamente.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
     };
   }
 
-  const {
-    nome,
-    sobrenome,
-    password,
-  } = parsed.data;
+  const { nome, sobrenome, password } = parsed.data;
 
-  const email =
-    parsed.data.email.toLowerCase();
+  const email = parsed.data.email.toLowerCase();
 
   /*
    * 2. Rate limit por IP e IP + e-mail.
@@ -261,35 +296,24 @@ export async function registerAction(
   let rateLimit: RateLimitDecision;
 
   try {
-    const ip =
-      await getTrustedClientIp();
+    const ip = await getTrustedClientIp();
 
-    rateLimit =
-      await consumeRateLimits([
-        {
-          scope: "registerIp",
-          identifier: `ip:${ip}`,
-        },
-        {
-          scope:
-            "registerCredential",
-          identifier:
-            `ip:${ip}:email:${email}`,
-        },
-      ]);
-  } catch (error) {
-    console.error(
-      "Rate limit de cadastro indisponível",
+    rateLimit = await consumeRateLimits([
       {
-        event:
-          "auth.register.rate_limit_unavailable",
-
-        error:
-          error instanceof Error
-            ? error.message
-            : "unknown",
+        scope: "registerIp",
+        identifier: `ip:${ip}`,
       },
-    );
+      {
+        scope: "registerCredential",
+        identifier: `ip:${ip}:email:${email}`,
+      },
+    ]);
+  } catch (error) {
+    console.error("Rate limit de cadastro indisponível", {
+      event: "auth.register.rate_limit_unavailable",
+
+      error: error instanceof Error ? error.message : "unknown",
+    });
 
     /*
      * Falha fechada:
@@ -299,29 +323,21 @@ export async function registerAction(
     return {
       ok: false,
       code: "UNAVAILABLE",
-      message:
-        "Não foi possível processar o cadastro neste momento.",
+      message: "Não foi possível processar o cadastro neste momento.",
     };
   }
 
   if (!rateLimit.allowed) {
-    console.warn(
-      "Rate limit de cadastro excedido",
-      {
-        event:
-          "auth.register.rate_limited",
-        resetAt:
-          rateLimit.resetAt,
-      },
-    );
+    console.warn("Rate limit de cadastro excedido", {
+      event: "auth.register.rate_limited",
+      resetAt: rateLimit.resetAt,
+    });
 
     return {
       ok: false,
       code: "RATE_LIMITED",
-      message:
-        "Muitas tentativas de cadastro.",
-      retryAfterSeconds:
-        rateLimit.retryAfterSeconds,
+      message: "Muitas tentativas de cadastro.",
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
     };
   }
 
@@ -331,70 +347,79 @@ export async function registerAction(
    * Não usamos supabaseAdmin para o
    * autocadastro público.
    */
-  const supabase =
-    await createServerSupabase();
+  const supabase = await createServerSupabase();
 
-  const { data, error } =
-    await supabase.auth.signUp({
-      email,
-      password,
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
 
-      options: {
-        data: {
-          nome,
-          sobrenome,
+    options: {
+      captchaToken: parsed.data.captchaToken,
 
-          /*
-           * Marcador lido pelo trigger.
-           * O usuário nunca escolhe a role.
-           */
-          cadastro_tipo: "cliente",
-        },
+      data: {
+        nome,
+        sobrenome,
+        cadastro_tipo: "cliente",
       },
+    },
+  });
+
+  // CAPTCHA INVÁLIDO OU EXPIRADO
+  if (error?.code === "captcha_failed") {
+    console.warn("Falha na verificação CAPTCHA", {
+      event: "auth.register.captcha_failed",
     });
 
-  if (error) {
-    console.warn(
-      "Cadastro rejeitado pelo Supabase",
-      {
-        event:
-          "auth.register.failed",
-        authCode: error.code,
-      },
-    );
-
-    /*
-     * Não retornamos:
-     * - mensagem interna do banco;
-     * - nome de tabela;
-     * - indicação de e-mail existente.
-     */
     return {
       ok: false,
-      code: "REGISTER_FAILED",
-      message:
-        "Não foi possível concluir o cadastro.",
+      code: "CAPTCHA_FAILED",
+      message: "A verificação de segurança expirou ou falhou. Tente novamente.",
     };
   }
 
-  /*
-   * Confirmação de e-mail desabilitada:
-   * o Supabase já criou uma sessão.
-   */
+  // RATE LIMIT NATIVO DO SUPABASE
+  if (
+    error?.code === "over_request_rate_limit" ||
+    error?.code === "over_email_send_rate_limit" ||
+    error?.status === 429
+  ) {
+    console.warn("Rate limit nativo do Supabase excedido", {
+      event: "auth.register.supabase_rate_limited",
+    });
+
+    return {
+      ok: false,
+      code: "RATE_LIMITED",
+      message: "Muitas tentativas de cadastro. Aguarde e tente novamente.",
+    };
+  }
+
+  // DEMAIS ERROS DO CADASTRO
+  if (error) {
+    console.warn("Cadastro rejeitado pelo Supabase", {
+      event: "auth.register.failed",
+      authCode: error.code,
+    });
+
+    return {
+      ok: false,
+      code: "REGISTER_FAILED",
+      message: "Não foi possível concluir o cadastro.",
+    };
+  }
+
+  // SE O SUPABASE CRIOU UMA SESSÃO,
+  // A CONFIRMAÇÃO DE E-MAIL NÃO ESTÁ IMPEDINDO O LOGIN
   if (data.session) {
     redirect("/dashboard");
   }
 
-  /*
-   * Confirmação de e-mail habilitada:
-   * o usuário ainda não possui sessão.
-   */
+  // SE NÃO EXISTE SESSÃO,
+  // O USUÁRIO PRECISA CONFIRMAR O E-MAIL
   return {
     ok: true,
-    requiresEmailConfirmation:
-      true,
-    message:
-      "Verifique seu e-mail para confirmar o cadastro.",
+    requiresEmailConfirmation: true,
+    message: "Verifique seu e-mail para confirmar o cadastro.",
   };
 }
 

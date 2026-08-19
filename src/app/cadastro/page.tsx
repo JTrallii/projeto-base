@@ -1,89 +1,72 @@
 "use client";
 
-import {
-  useState,
-  type FormEvent,
-} from "react";
+import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import {
-  Mail,
-  Lock,
-  Eye,
-  EyeOff,
-  User,
-} from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, User } from "lucide-react";
 import { toast } from "sonner";
-
+import TurnstileWidget from "@/components/security/TurnstileWidget";
 import { useAuth } from "@/contexts/AuthContext";
 import Layout from "@/components/ui/Layout";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/input";
-import {
-  Card,
-  CardHeader,
-  CardBody,
-} from "@/components/ui/card";
+import { Card, CardHeader, CardBody } from "@/components/ui/card";
 
 export default function CadastroPage() {
-  const [loading, setLoading] =
-    useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const [fieldErrors, setFieldErrors] =
-    useState<Record<string, string>>(
-      {},
-    );
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
-  const [generalError, setGeneralError] =
-    useState("");
+  const [generalError, setGeneralError] = useState("");
 
-  const [showPassword, setShowPassword] =
-    useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
-  const [
-    showConfirmPassword,
-    setShowConfirmPassword,
-  ] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+
+  const [captchaResetSignal, setCaptchaResetSignal] = useState(0);
+
+  function resetCaptcha() {
+    setCaptchaToken(null);
+
+    setCaptchaResetSignal((current) => current + 1);
+  }
 
   const { register } = useAuth();
   const router = useRouter();
 
-  async function handleSubmit(
-    event: FormEvent<HTMLFormElement>,
-  ) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    setLoading(true);
     setFieldErrors({});
     setGeneralError("");
 
+    if (!captchaToken) {
+      const message = "Conclua a verificação de segurança.";
+
+      setGeneralError(message);
+
+      toast.error(message);
+
+      return;
+    }
+
+    setLoading(true);
+    setLoading(true);
+
     try {
-      const formData =
-        new FormData(
-          event.currentTarget,
-        );
+      const formData = new FormData(event.currentTarget);
 
-      const nome = String(
-        formData.get("nome") ?? "",
-      );
+      const nome = String(formData.get("nome") ?? "");
 
-      const sobrenome = String(
-        formData.get("sobrenome") ?? "",
-      );
+      const sobrenome = String(formData.get("sobrenome") ?? "");
 
-      const email = String(
-        formData.get("email") ?? "",
-      );
+      const email = String(formData.get("email") ?? "");
 
-      const password = String(
-        formData.get("password") ?? "",
-      );
+      const password = String(formData.get("password") ?? "");
 
-      const confirmPassword = String(
-        formData.get(
-          "confirmPassword",
-        ) ?? "",
-      );
+      const confirmPassword = String(formData.get("confirmPassword") ?? "");
 
       const result = await register(
         nome,
@@ -91,78 +74,56 @@ export default function CadastroPage() {
         email,
         password,
         confirmPassword,
+        captchaToken,
       );
 
       if (result.error) {
         if (result.fieldErrors) {
-          const normalizedErrors:
-            Record<string, string> = {};
+          const normalizedErrors: Record<string, string> = {};
 
-          for (const [
-            field,
-            messages,
-          ] of Object.entries(
-            result.fieldErrors,
-          )) {
-            const firstMessage =
-              messages?.[0];
+          for (const [field, messages] of Object.entries(result.fieldErrors)) {
+            const firstMessage = messages?.[0];
 
             if (firstMessage) {
-              normalizedErrors[field] =
-                firstMessage;
+              normalizedErrors[field] = firstMessage;
             }
           }
 
-          setFieldErrors(
-            normalizedErrors,
-          );
+          setFieldErrors(normalizedErrors);
         }
 
-        const errorMessage =
-          result.retryAfterSeconds
-            ? `${result.error} Tente novamente em aproximadamente ${result.retryAfterSeconds} segundos.`
-            : result.error;
+        const errorMessage = result.retryAfterSeconds
+          ? `${result.error} Tente novamente em aproximadamente ${result.retryAfterSeconds} segundos.`
+          : result.error;
 
-        setGeneralError(
-          errorMessage,
-        );
+        setGeneralError(errorMessage);
 
         toast.error(errorMessage);
-
+        resetCaptcha();
         return;
       }
 
-      if (
-        result.requiresEmailConfirmation
-      ) {
+      if (result.requiresEmailConfirmation) {
         toast.success(
-          result.message ??
-            "Verifique seu e-mail para confirmar o cadastro.",
+          result.message ?? "Verifique seu e-mail para confirmar o cadastro.",
         );
 
-        router.push(
-          "/login?registered=true",
-        );
+        router.push("/login?registered=true");
 
         return;
       }
 
       if (result.message) {
-        toast.success(
-          result.message,
-        );
+        toast.success(result.message);
       }
     } catch (error) {
-      console.error(
-        "Erro inesperado durante o cadastro:",
-        error,
-      );
+      console.error("Erro inesperado durante o cadastro:", error);
 
-      const message =
-        "Não foi possível concluir o cadastro. Tente novamente.";
+      const message = "Não foi possível concluir o cadastro. Tente novamente.";
 
       setGeneralError(message);
       toast.error(message);
+      resetCaptcha();
     } finally {
       setLoading(false);
     }
@@ -171,37 +132,24 @@ export default function CadastroPage() {
   return (
     <Layout>
       <div className="min-h-[calc(100vh-8rem)] flex items-center justify-center px-4">
-        <Card
-          glass
-          className="w-full max-w-md"
-        >
+        <Card glass className="w-full max-w-md">
           <CardHeader>
-            <h1 className="text-2xl font-bold text-white">
-              Criar conta
-            </h1>
+            <h1 className="text-2xl font-bold text-white">Criar conta</h1>
 
             <p className="text-sm text-white/50">
-              Preencha os dados para se
-              cadastrar.
+              Preencha os dados para se cadastrar.
             </p>
           </CardHeader>
 
           <CardBody>
-            <form
-              onSubmit={handleSubmit}
-              className="space-y-4"
-            >
+            <form onSubmit={handleSubmit} className="space-y-4">
               <Input
                 label="Nome"
                 name="nome"
                 type="text"
                 placeholder="Seu nome"
-                icon={
-                  <User size={16} />
-                }
-                error={
-                  fieldErrors.nome
-                }
+                icon={<User size={16} />}
+                error={fieldErrors.nome}
                 autoComplete="given-name"
                 required
                 disabled={loading}
@@ -212,12 +160,8 @@ export default function CadastroPage() {
                 name="sobrenome"
                 type="text"
                 placeholder="Seu sobrenome"
-                icon={
-                  <User size={16} />
-                }
-                error={
-                  fieldErrors.sobrenome
-                }
+                icon={<User size={16} />}
+                error={fieldErrors.sobrenome}
                 autoComplete="family-name"
                 required
                 disabled={loading}
@@ -228,12 +172,8 @@ export default function CadastroPage() {
                 name="email"
                 type="email"
                 placeholder="seu@email.com"
-                icon={
-                  <Mail size={16} />
-                }
-                error={
-                  fieldErrors.email
-                }
+                icon={<Mail size={16} />}
+                error={fieldErrors.email}
                 autoComplete="email"
                 required
                 disabled={loading}
@@ -243,18 +183,10 @@ export default function CadastroPage() {
                 <Input
                   label="Senha"
                   name="password"
-                  type={
-                    showPassword
-                      ? "text"
-                      : "password"
-                  }
+                  type={showPassword ? "text" : "password"}
                   placeholder="Mínimo 12 caracteres"
-                  icon={
-                    <Lock size={16} />
-                  }
-                  error={
-                    fieldErrors.password
-                  }
+                  icon={<Lock size={16} />}
+                  error={fieldErrors.password}
                   autoComplete="new-password"
                   minLength={12}
                   required
@@ -263,30 +195,13 @@ export default function CadastroPage() {
 
                 <button
                   type="button"
-                  onClick={() =>
-                    setShowPassword(
-                      (current) =>
-                        !current,
-                    )
-                  }
+                  onClick={() => setShowPassword((current) => !current)}
                   disabled={loading}
-                  aria-label={
-                    showPassword
-                      ? "Ocultar senha"
-                      : "Mostrar senha"
-                  }
-                  aria-pressed={
-                    showPassword
-                  }
+                  aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                  aria-pressed={showPassword}
                   className="absolute right-3 bottom-2.5 text-white/40 hover:text-white/70 transition-colors disabled:opacity-50"
                 >
-                  {showPassword ? (
-                    <EyeOff
-                      size={18}
-                    />
-                  ) : (
-                    <Eye size={18} />
-                  )}
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
 
@@ -294,18 +209,10 @@ export default function CadastroPage() {
                 <Input
                   label="Confirmar senha"
                   name="confirmPassword"
-                  type={
-                    showConfirmPassword
-                      ? "text"
-                      : "password"
-                  }
+                  type={showConfirmPassword ? "text" : "password"}
                   placeholder="Repita a senha"
-                  icon={
-                    <Lock size={16} />
-                  }
-                  error={
-                    fieldErrors.confirmPassword
-                  }
+                  icon={<Lock size={16} />}
+                  error={fieldErrors.confirmPassword}
                   autoComplete="new-password"
                   minLength={12}
                   required
@@ -314,33 +221,27 @@ export default function CadastroPage() {
 
                 <button
                   type="button"
-                  onClick={() =>
-                    setShowConfirmPassword(
-                      (current) =>
-                        !current,
-                    )
-                  }
+                  onClick={() => setShowConfirmPassword((current) => !current)}
                   disabled={loading}
                   aria-label={
                     showConfirmPassword
                       ? "Ocultar confirmação de senha"
                       : "Mostrar confirmação de senha"
                   }
-                  aria-pressed={
-                    showConfirmPassword
-                  }
+                  aria-pressed={showConfirmPassword}
                   className="absolute right-3 bottom-2.5 text-white/40 hover:text-white/70 transition-colors disabled:opacity-50"
                 >
                   {showConfirmPassword ? (
-                    <EyeOff
-                      size={18}
-                    />
+                    <EyeOff size={18} />
                   ) : (
                     <Eye size={18} />
                   )}
                 </button>
               </div>
-
+              <TurnstileWidget
+                onTokenChange={setCaptchaToken}
+                resetSignal={captchaResetSignal}
+              />
               {generalError && (
                 <p
                   role="alert"
@@ -356,7 +257,7 @@ export default function CadastroPage() {
                 variant="primary"
                 className="w-full"
                 isLoading={loading}
-                disabled={loading}
+                disabled={loading || !captchaToken}
               >
                 Criar conta
               </Button>

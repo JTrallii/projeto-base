@@ -4,36 +4,45 @@ import { useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Mail, Lock, Eye, EyeOff } from "lucide-react";
-
+import TurnstileWidget from "@/components/security/TurnstileWidget";
 import { useAuth } from "@/contexts/AuthContext";
 import Layout from "@/components/ui/Layout";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/input";
-import {
-  Card,
-  CardHeader,
-  CardBody,
-} from "@/components/ui/card";
+import { Card, CardHeader, CardBody } from "@/components/ui/card";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] =
-    useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+
+  const [captchaResetSignal, setCaptchaResetSignal] = useState(0);
 
   const { login } = useAuth();
   const searchParams = useSearchParams();
 
-  const handleSubmit = async (
-    e: FormEvent<HTMLFormElement>,
-  ) => {
+  function resetCaptcha() {
+    setCaptchaToken(null);
+
+    setCaptchaResetSignal((current) => current + 1);
+  }
+
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError("");
 
     if (!email.trim() || !password) {
       setError("Preencha todos os campos.");
+
+      return;
+    }
+
+    if (!captchaToken) {
+      setError("Conclua a verificação de segurança.");
+
       return;
     }
 
@@ -48,9 +57,7 @@ export default function LoginPage() {
        * quando o usuário tenta acessar uma rota
        * protegida sem estar autenticado.
        */
-      const redirectTo =
-        searchParams.get("redirect") ??
-        "/dashboard";
+      const redirectTo = searchParams.get("redirect") ?? "/dashboard";
 
       /*
        * login() chama a Server Action.
@@ -63,11 +70,7 @@ export default function LoginPage() {
        * 5. grava os cookies;
        * 6. redireciona.
        */
-      const result = await login(
-        email,
-        password,
-        redirectTo,
-      );
+      const result = await login(email, password, captchaToken, redirectTo);
 
       /*
        * Em caso de sucesso, a Server Action
@@ -81,16 +84,14 @@ export default function LoginPage() {
         } else {
           setError(result.error);
         }
+
+        resetCaptcha();
       }
     } catch (unexpectedError) {
-      console.error(
-        "Erro inesperado durante o login:",
-        unexpectedError,
-      );
+      console.error("Erro inesperado durante o login:", unexpectedError);
+      resetCaptcha();
 
-      setError(
-        "Não foi possível realizar o login. Tente novamente.",
-      );
+      setError("Não foi possível realizar o login. Tente novamente.");
     } finally {
       setLoading(false);
     }
@@ -101,27 +102,20 @@ export default function LoginPage() {
       <div className="min-h-[calc(100vh-8rem)] flex items-center justify-center px-4">
         <Card glass className="w-full max-w-md">
           <CardHeader>
-            <h1 className="text-2xl font-bold text-white">
-              Entrar
-            </h1>
+            <h1 className="text-2xl font-bold text-white">Entrar</h1>
             <p className="text-sm text-white/50">
               Acesse sua conta para continuar.
             </p>
           </CardHeader>
 
           <CardBody>
-            <form
-              onSubmit={handleSubmit}
-              className="space-y-4"
-            >
+            <form onSubmit={handleSubmit} className="space-y-4">
               <Input
                 label="Email"
                 type="email"
                 placeholder="seu@email.com"
                 value={email}
-                onChange={(e) =>
-                  setEmail(e.target.value)
-                }
+                onChange={(e) => setEmail(e.target.value)}
                 icon={<Mail size={16} />}
                 autoComplete="email"
                 required
@@ -131,16 +125,10 @@ export default function LoginPage() {
               <div className="relative">
                 <Input
                   label="Senha"
-                  type={
-                    showPassword
-                      ? "text"
-                      : "password"
-                  }
+                  type={showPassword ? "text" : "password"}
                   placeholder="Sua senha"
                   value={password}
-                  onChange={(e) =>
-                    setPassword(e.target.value)
-                  }
+                  onChange={(e) => setPassword(e.target.value)}
                   icon={<Lock size={16} />}
                   autoComplete="current-password"
                   required
@@ -149,27 +137,19 @@ export default function LoginPage() {
 
                 <button
                   type="button"
-                  onClick={() =>
-                    setShowPassword(
-                      (current) => !current,
-                    )
-                  }
+                  onClick={() => setShowPassword((current) => !current)}
                   disabled={loading}
-                  aria-label={
-                    showPassword
-                      ? "Ocultar senha"
-                      : "Mostrar senha"
-                  }
+                  aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
                   aria-pressed={showPassword}
                   className="absolute right-3 bottom-2.5 text-white/40 hover:text-white/70 transition-colors disabled:opacity-50"
                 >
-                  {showPassword ? (
-                    <EyeOff size={18} />
-                  ) : (
-                    <Eye size={18} />
-                  )}
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
+              <TurnstileWidget
+                onTokenChange={setCaptchaToken}
+                resetSignal={captchaResetSignal}
+              />
 
               {error && (
                 <p
@@ -186,7 +166,7 @@ export default function LoginPage() {
                 variant="primary"
                 className="w-full"
                 isLoading={loading}
-                disabled={loading}
+                disabled={loading || !captchaToken}
               >
                 Entrar
               </Button>

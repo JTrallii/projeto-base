@@ -9,11 +9,7 @@ import {
   type ReactNode,
 } from "react";
 
-import {
-  loginAction,
-  logoutAction,
-  registerAction,
-} from "@/actions/auth";
+import { loginAction, logoutAction, registerAction } from "@/actions/auth";
 
 import type { User } from "@/types";
 
@@ -23,10 +19,7 @@ type AuthOperationResult = {
   requiresEmailConfirmation?: boolean;
   message?: string;
 
-  fieldErrors?: Record<
-    string,
-    string[] | undefined
-  >;
+  fieldErrors?: Record<string, string[] | undefined>;
 };
 
 interface AuthContextType {
@@ -37,6 +30,7 @@ interface AuthContextType {
   login: (
     email: string,
     password: string,
+    captchaToken: string,
     redirectTo?: string,
   ) => Promise<AuthOperationResult>;
 
@@ -46,29 +40,21 @@ interface AuthContextType {
     email: string,
     password: string,
     confirmPassword: string,
+    captchaToken: string,
   ) => Promise<AuthOperationResult>;
 
   logout: () => Promise<AuthOperationResult>;
 }
 
-const AuthContext =
-  createContext<
-    AuthContextType | undefined
-  >(undefined);
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 type AuthProviderProps = {
   children: ReactNode;
   initialUser: User | null;
 };
 
-export function AuthProvider({
-  children,
-  initialUser,
-}: AuthProviderProps) {
-  const [user, setUser] =
-    useState<User | null>(
-      initialUser,
-    );
+export function AuthProvider({ children, initialUser }: AuthProviderProps) {
+  const [user, setUser] = useState<User | null>(initialUser);
 
   /**
    * Agora representa apenas uma operação
@@ -77,8 +63,7 @@ export function AuthProvider({
    * O carregamento inicial já aconteceu
    * no servidor.
    */
-  const [isLoading, setIsLoading] =
-    useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
   /**
    * Quando o servidor renderizar novamente
@@ -92,30 +77,23 @@ export function AuthProvider({
     async (
       email: string,
       password: string,
+      captchaToken: string,
       redirectTo?: string,
     ): Promise<AuthOperationResult> => {
       setIsLoading(true);
 
       try {
-        const result =
-          await loginAction({
-            email,
-            password,
-            redirectTo,
-          });
+        const result = await loginAction({
+          email,
+          password,
+          captchaToken,
+          redirectTo,
+        });
 
-        /**
-         * Em caso de sucesso, loginAction
-         * redirecionará pelo servidor.
-         *
-         * Portanto, normalmente somente
-         * erros chegam neste ponto.
-         */
         if (!result.ok) {
           return {
             error: result.message,
-            retryAfterSeconds:
-              result.retryAfterSeconds,
+            retryAfterSeconds: result.retryAfterSeconds,
           };
         }
 
@@ -130,69 +108,41 @@ export function AuthProvider({
   );
 
   const register = useCallback(
-  async (
-    nome: string,
-    sobrenome: string,
-    email: string,
-    password: string,
-    confirmPassword: string,
-  ): Promise<AuthOperationResult> => {
-    setIsLoading(true);
+    async (
+      nome: string,
+      sobrenome: string,
+      email: string,
+      password: string,
+      confirmPassword: string,
+      captchaToken: string,
+    ): Promise<AuthOperationResult> => {
+      setIsLoading(true);
 
-    try {
-      const result =
-        await registerAction({
+      try {
+        const result = await registerAction({
           nome,
           sobrenome,
           email,
           password,
           confirmPassword,
+          captchaToken,
         });
 
-      if (!result.ok) {
-        return {
-          error: result.message,
-
-          retryAfterSeconds:
-            result.retryAfterSeconds,
-
-          fieldErrors:
-            result.fieldErrors,
-        };
-      }
-
-      return {
-        message: result.message,
-
-        requiresEmailConfirmation:
-          result.requiresEmailConfirmation,
-      };
-    } finally {
-      setIsLoading(false);
-    }
-  },
-  [],
-);
-
-  const logout = useCallback(
-    async (): Promise<AuthOperationResult> => {
-      setIsLoading(true);
-
-      try {
-        const result =
-          await logoutAction();
-
-        /**
-         * Em caso de sucesso, a action
-         * redireciona para /login.
-         */
         if (!result.ok) {
           return {
             error: result.message,
+
+            retryAfterSeconds: result.retryAfterSeconds,
+
+            fieldErrors: result.fieldErrors,
           };
         }
 
-        return {};
+        return {
+          message: result.message,
+
+          requiresEmailConfirmation: result.requiresEmailConfirmation,
+        };
       } finally {
         setIsLoading(false);
       }
@@ -200,14 +150,35 @@ export function AuthProvider({
     [],
   );
 
+  const logout = useCallback(async (): Promise<AuthOperationResult> => {
+    setIsLoading(true);
+
+    try {
+      const result = await logoutAction();
+
+      /**
+       * Em caso de sucesso, a action
+       * redireciona para /login.
+       */
+      if (!result.ok) {
+        return {
+          error: result.message,
+        };
+      }
+
+      return {};
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
         user,
         isLoading,
 
-        isAuthenticated:
-          user !== null,
+        isAuthenticated: user !== null,
 
         login,
         register,
@@ -220,13 +191,10 @@ export function AuthProvider({
 }
 
 export function useAuth() {
-  const context =
-    useContext(AuthContext);
+  const context = useContext(AuthContext);
 
   if (!context) {
-    throw new Error(
-      "useAuth deve ser usado dentro de um AuthProvider",
-    );
+    throw new Error("useAuth deve ser usado dentro de um AuthProvider");
   }
 
   return context;
