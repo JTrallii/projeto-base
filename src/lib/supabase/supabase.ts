@@ -2,19 +2,28 @@
 
 import { createBrowserClient } from "@supabase/ssr";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabasePublishableKey =
-  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+function requireEnv(
+  value: string | undefined,
+  name: string,
+): string {
+  if (!value) {
+    throw new Error(
+      `Variável de ambiente não configurada: ${name}`,
+    );
+  }
 
-if (!supabaseUrl) {
-  throw new Error("NEXT_PUBLIC_SUPABASE_URL não configurada");
+  return value;
 }
 
-if (!supabasePublishableKey) {
-  throw new Error(
-    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY não configurada",
-  );
-}
+const supabaseUrl = requireEnv(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  "NEXT_PUBLIC_SUPABASE_URL",
+);
+
+const supabasePublishableKey = requireEnv(
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+);
 
 export function createClient() {
   return createBrowserClient(

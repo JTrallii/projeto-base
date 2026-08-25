@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import TurnstileWidget from "@/components/security/TurnstileWidget";
 import { useAuth } from "@/contexts/AuthContext";
 import Layout from "@/components/ui/Layout";
-import Button from "@/components/ui/Button";
+import Button from "@/components/ui/button";
 import Input from "@/components/ui/input";
 import { Card, CardHeader, CardBody } from "@/components/ui/card";
 

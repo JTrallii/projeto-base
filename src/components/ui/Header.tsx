@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { LogOut, LayoutDashboard, Home, User } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/supabase/utils";
-import Button from "./Button";
+import Button from "./button";
 
 export default function Header() {
   const { user, isAuthenticated, logout } = useAuth();

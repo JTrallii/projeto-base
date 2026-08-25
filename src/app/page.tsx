@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ArrowRight, Shield, Zap, Palette } from "lucide-react";
 import Layout from "@/components/ui/Layout";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import Button from "@/components/ui/Button";
+import Button from "@/components/ui/button";
 
 const features = [
   {

@@ -11,8 +11,8 @@ import {
   LogOut,
 } from "lucide-react";
 import Layout from "@/components/ui/Layout";
-import Button from "@/components/ui/Button";
-import { Card, CardHeader, CardBody } from "@/components/ui/Card";
+import Button from "@/components/ui/button";
+import { Card, CardHeader, CardBody } from "@/components/ui/card";
 
 export default function DashboardPage() {
   const { user, isAuthenticated, isLoading, logout } = useAuth();
