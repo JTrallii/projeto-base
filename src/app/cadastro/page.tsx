@@ -53,7 +53,6 @@ export default function CadastroPage() {
     }
 
     setLoading(true);
-    setLoading(true);
 
     try {
       const formData = new FormData(event.currentTarget);
