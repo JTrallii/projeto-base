@@ -246,20 +246,25 @@ export async function loginAction(input: unknown): Promise<AuthActionResult> {
   }
 
   if (error) {
-    console.warn("Falha de autenticação", {
-      event: "auth.login.failed",
-      authCode: error.code,
-    });
+  console.warn("Falha de autenticação", {
+    event: "auth.login.failed",
+    authCode: error.code,
+    authStatus: error.status,
 
-    /**
-     * Não revelamos se o e-mail existe.
-     */
-    return {
-      ok: false,
-      code: "INVALID_CREDENTIALS",
-      message: "E-mail ou senha inválidos.",
-    };
-  }
+    ...(process.env.NODE_ENV === "development"
+      ? {
+          authMessage: error.message,
+          authName: error.name,
+        }
+      : {}),
+  });
+
+  return {
+    ok: false,
+    code: "INVALID_CREDENTIALS",
+    message: "E-mail ou senha inválidos.",
+  };
+}
 
   /**
    * O redirect deve ficar fora de try/catch,
