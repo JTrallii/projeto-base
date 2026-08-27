@@ -1,7 +1,6 @@
 import type { NextConfig } from "next";
 
-const isDevelopment =
-  process.env.NODE_ENV === "development";
+const isDevelopment = process.env.NODE_ENV === "development";
 
 function getSupabaseSources() {
   const supabaseUrl =
@@ -24,7 +23,6 @@ function getSupabaseSources() {
 
     return {
       httpOrigin: url.origin,
-
       websocketOrigin:
         `${websocketProtocol}//${url.host}`,
     };
@@ -43,12 +41,9 @@ const {
 
 const connectSources = [
   "'self'",
-
   supabaseHttpOrigin,
   supabaseWebsocketOrigin,
-
   "https://challenges.cloudflare.com",
-
   ...(isDevelopment
     ? [
         "ws://localhost:*",
@@ -61,14 +56,12 @@ const imageSources = [
   "'self'",
   "data:",
   "blob:",
-
   supabaseHttpOrigin,
 ].filter(Boolean);
 
 const mediaSources = [
   "'self'",
   "blob:",
-
   supabaseHttpOrigin,
 ].filter(Boolean);
 
@@ -86,7 +79,6 @@ const contentSecurityPolicy = [
   ].join(" "),
 
   "script-src-attr 'none'",
-
   "style-src 'self' 'unsafe-inline'",
 
   `img-src ${imageSources.join(" ")}`,
@@ -123,28 +115,23 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: contentSecurityPolicy,
   },
-
   {
     key: "X-Content-Type-Options",
     value: "nosniff",
   },
-
   {
     key: "X-Frame-Options",
     value: "DENY",
   },
-
   {
     key: "Referrer-Policy",
     value: "strict-origin-when-cross-origin",
   },
-
   {
     key: "Permissions-Policy",
     value:
       "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()",
   },
-
   {
     key: "X-Permitted-Cross-Domain-Policies",
     value: "none",
@@ -162,6 +149,13 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "6mb",
+    },
+  },
+
   async headers() {
     return [
       {
@@ -180,7 +174,8 @@ const nextConfig: NextConfig = {
         test: /\.(jsx|tsx)$/,
         exclude: /node_modules/,
         enforce: "pre",
-        use: "@dyad-sh/nextjs-webpack-component-tagger",
+        use:
+          "@dyad-sh/nextjs-webpack-component-tagger",
       });
     }
 
