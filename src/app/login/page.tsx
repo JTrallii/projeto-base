@@ -173,6 +173,15 @@ export default function LoginPage() {
             </form>
 
             <p className="mt-4 text-center text-sm text-white/40">
+              <Link
+                href="/esqueci-senha"
+                className="text-[#38bdf8] hover:text-[#38bdf8]/80 transition-colors"
+              >
+                Esqueceu sua senha?
+              </Link>
+            </p>
+
+            <p className="mt-4 text-center text-sm text-white/40">
               Não tem conta?{" "}
               <Link
                 href="/cadastro"
