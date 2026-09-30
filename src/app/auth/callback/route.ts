@@ -1,128 +1,69 @@
-import {
-  NextResponse,
-  type NextRequest,
-} from "next/server";
+import { NextResponse } from "next/server";
+import { getAppUrl } from "@/lib/security/app-url";
+import { createServerSupabase } from "@/lib/supabase/server";
 
-import {
-  createServerSupabase,
-} from "@/lib/supabase/server";
+function getSafeNextPath(value: string | null): string {
+  if (value === "/redefinir-senha") {
+    return value;
+  }
 
-const ALLOWED_NEXT_PATHS =
-  new Set([
-    "/redefinir-senha",
-  ]);
+  return "/redefinir-senha";
+}
 
-export async function GET(
-  request: NextRequest,
-) {
-  const requestUrl =
-    new URL(request.url);
+export async function GET(request: Request) {
+  const appUrl = getAppUrl();
 
-  const code =
-    requestUrl.searchParams.get(
-      "code",
-    );
+  if (!appUrl) {
+    console.error("APP_URL ausente ou inválida.", {
+      event: "auth.password_reset.invalid_app_url",
+    });
 
-  const requestedNext =
-    requestUrl.searchParams.get(
-      "next",
-    ) ??
-    "/redefinir-senha";
+    return new Response("Configuração inválida.", {
+      status: 500,
+    });
+  }
 
-  /*
-   * Evita open redirect.
-   *
-   * Mesmo que alguém tente:
-   *
-   * ?next=https://evil.com
-   *
-   * o redirect continuará limitado
-   * às rotas explicitamente permitidas.
-   */
-  const nextPath =
-    ALLOWED_NEXT_PATHS.has(
-      requestedNext,
-    )
-      ? requestedNext
-      : "/redefinir-senha";
+  const requestUrl = new URL(request.url);
 
-  /*
-   * Callback sem code válido.
-   */
+  const code = requestUrl.searchParams.get("code");
+
+  const nextPath = getSafeNextPath(
+    requestUrl.searchParams.get("next"),
+  );
+
   if (!code) {
     return NextResponse.redirect(
-      new URL(
-        "/login?recovery=invalid",
-        requestUrl.origin,
-      ),
-      303,
+      new URL("/login?recovery=invalid", appUrl),
     );
   }
 
-  const supabase =
-    await createServerSupabase();
+  const supabase = await createServerSupabase();
 
-  /*
-   * Troca o authorization code
-   * por uma sessão server-side.
-   *
-   * Os cookies são gravados pelo
-   * cliente SSR do Supabase.
-   */
-  const {
-    error,
-  } =
-    await supabase.auth
-      .exchangeCodeForSession(
-        code,
-      );
+  const { error } =
+    await supabase.auth.exchangeCodeForSession(code);
 
   if (error) {
     console.warn(
-      "Falha ao trocar código de recuperação por sessão.",
+      "Falha ao trocar código de recovery por sessão.",
       {
-        event:
-          "auth.password_reset.callback_failed",
-
-        authCode:
-          error.code,
-
-        authStatus:
-          error.status,
-
-        ...(
-          process.env.NODE_ENV ===
-          "development"
-            ? {
-                authMessage:
-                  error.message,
-
-                authName:
-                  error.name,
-              }
-            : {}
-        ),
+        event: "auth.password_reset.callback_failed",
+        authCode: error.code,
+        authStatus: error.status,
+        ...(process.env.NODE_ENV === "development"
+          ? {
+              authMessage: error.message,
+              authName: error.name,
+            }
+          : {}),
       },
     );
 
-    /*
-     * Não exponha detalhes internos do
-     * Supabase para o navegador.
-     */
     return NextResponse.redirect(
-      new URL(
-        "/login?recovery=invalid",
-        requestUrl.origin,
-      ),
-      303,
+      new URL("/login?recovery=invalid", appUrl),
     );
   }
 
   return NextResponse.redirect(
-    new URL(
-      nextPath,
-      requestUrl.origin,
-    ),
-    303,
+    new URL(nextPath, appUrl),
   );
 }
