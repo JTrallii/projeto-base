@@ -3,19 +3,15 @@
 import { z } from "zod";
 
 import { requireAuthenticatedUser } from "@/lib/auth/require-authenticated-user";
-
+import { getRecoverySessionUserId } from "@/lib/auth/recovery-session";
+import { getAppUrl } from "@/lib/security/app-url";
 import { recordAuditEvent } from "@/lib/security/audit-log";
-
 import { getTrustedClientIp } from "@/lib/security/client-ip";
-
 import {
   consumeRateLimits,
   type RateLimitDecision,
 } from "@/lib/security/rate-limit";
-
 import { createServerSupabase } from "@/lib/supabase/server";
-
-import { getRecoverySessionUserId } from "@/lib/auth/recovery-session";
 
 /*
  * ============================================================
@@ -76,7 +72,11 @@ export type PasswordResetRequestResult =
   | {
       ok: false;
 
-      code: "INVALID_INPUT" | "RATE_LIMITED" | "CAPTCHA_FAILED" | "UNAVAILABLE";
+      code:
+        | "INVALID_INPUT"
+        | "RATE_LIMITED"
+        | "CAPTCHA_FAILED"
+        | "UNAVAILABLE";
 
       message: string;
 
@@ -123,60 +123,13 @@ const GENERIC_RESET_MESSAGE =
  * ============================================================
  */
 
-function getTrustedAppOrigin(): string | null {
-  const configuredUrl = process.env.APP_URL?.trim();
-
-  if (!configuredUrl) {
-    return null;
-  }
-
-  try {
-    const url = new URL(configuredUrl);
-
-    /*
-     * Não permitimos credenciais embutidas:
-     *
-     * https://user:password@host
-     */
-    if (url.username || url.password) {
-      return null;
-    }
-
-    /*
-     * Produção deve utilizar HTTPS.
-     *
-     * HTTP só é aceito em desenvolvimento local.
-     */
-    const isLocalhost =
-      url.hostname === "localhost" || url.hostname === "127.0.0.1";
-
-    if (
-      url.protocol !== "https:" &&
-      !(
-        process.env.NODE_ENV === "development" &&
-        url.protocol === "http:" &&
-        isLocalhost
-      )
-    ) {
-      return null;
-    }
-
-    return url.origin;
-  } catch {
-    return null;
-  }
-}
-
 function passwordResetRateLimitError(
   decision: RateLimitDecision,
 ): PasswordResetRequestResult {
   return {
     ok: false,
-
     code: "RATE_LIMITED",
-
     message: "Muitas tentativas. Aguarde e tente novamente.",
-
     retryAfterSeconds: decision.retryAfterSeconds,
   };
 }
@@ -188,8 +141,8 @@ function passwordResetRateLimitError(
  * AÇÃO PÚBLICA.
  *
  * Não usa requireAuthenticatedUser(), pois o usuário
- * obviamente ainda não precisa estar autenticado para
- * recuperar a própria senha.
+ * ainda não precisa estar autenticado para recuperar
+ * a própria senha.
  *
  * Segurança:
  *
@@ -197,6 +150,7 @@ function passwordResetRateLimitError(
  * → IP confiável
  * → rate limit por IP
  * → rate limit IP + e-mail
+ * → rate limit por e-mail
  * → Turnstile
  * → Supabase Auth
  * → resposta genérica
@@ -214,11 +168,8 @@ export async function requestPasswordResetAction(
   if (!parsed.success) {
     return {
       ok: false,
-
       code: "INVALID_INPUT",
-
       message: "Revise os dados informados.",
-
       fieldErrors: parsed.error.flatten().fieldErrors,
     };
   }
@@ -228,10 +179,15 @@ export async function requestPasswordResetAction(
   /*
    * 2. Rate limiting.
    *
-   * Duas chaves:
+   * Três chaves:
    *
    * - IP;
-   * - IP + e-mail.
+   * - IP + e-mail;
+   * - e-mail.
+   *
+   * O terceiro limite impede que um atacante
+   * distribua solicitações para o mesmo endereço
+   * usando vários IPs diferentes.
    *
    * rate-limit.ts aplica HMAC antes
    * de armazenar o identificador.
@@ -244,42 +200,45 @@ export async function requestPasswordResetAction(
     rateLimit = await consumeRateLimits([
       {
         scope: "passwordReset",
-
         identifier: `ip:${ip}`,
       },
-
       {
         scope: "passwordReset",
-
         identifier: `ip:${ip}:email:${email}`,
+      },
+      {
+        scope: "passwordReset",
+        identifier: `email:${email}`,
       },
     ]);
   } catch (error) {
-    console.error("Rate limit de recuperação de senha indisponível.", {
-      event: "auth.password_reset.rate_limit_unavailable",
-
-      error: error instanceof Error ? error.message : "unknown",
-    });
+    console.error(
+      "Rate limit de recuperação de senha indisponível.",
+      {
+        event: "auth.password_reset.rate_limit_unavailable",
+        error: error instanceof Error ? error.message : "unknown",
+      },
+    );
 
     /*
      * Fail closed.
      */
     return {
       ok: false,
-
       code: "UNAVAILABLE",
-
       message:
         "Não foi possível processar a recuperação de senha neste momento.",
     };
   }
 
   if (!rateLimit.allowed) {
-    console.warn("Rate limit de recuperação de senha excedido.", {
-      event: "auth.password_reset.rate_limited",
-
-      resetAt: rateLimit.resetAt,
-    });
+    console.warn(
+      "Rate limit de recuperação de senha excedido.",
+      {
+        event: "auth.password_reset.rate_limited",
+        resetAt: rateLimit.resetAt,
+      },
+    );
 
     return passwordResetRateLimitError(rateLimit);
   }
@@ -289,7 +248,7 @@ export async function requestPasswordResetAction(
    *
    * Nunca recebemos redirectTo do cliente.
    */
-  const appOrigin = getTrustedAppOrigin();
+  const appOrigin = getAppUrl();
 
   if (!appOrigin) {
     console.error("APP_URL ausente ou inválida.", {
@@ -298,9 +257,7 @@ export async function requestPasswordResetAction(
 
     return {
       ok: false,
-
       code: "UNAVAILABLE",
-
       message:
         "Não foi possível processar a recuperação de senha neste momento.",
     };
@@ -319,26 +276,22 @@ export async function requestPasswordResetAction(
   /*
    * 5. Solicita e-mail ao Supabase.
    *
-   * CAPTCHA é validado pelo próprio
-   * Supabase Auth.
+   * CAPTCHA é validado pelo próprio Supabase Auth.
    */
   try {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo,
-
-      captchaToken: parsed.data.captchaToken,
-    });
+    const { error } =
+      await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo,
+        captchaToken: parsed.data.captchaToken,
+      });
 
     /*
-     * CAPTCHA inválido não revela
-     * existência de conta.
+     * CAPTCHA inválido não revela existência de conta.
      */
     if (error?.code === "captcha_failed") {
       return {
         ok: false,
-
         code: "CAPTCHA_FAILED",
-
         message:
           "A verificação de segurança expirou ou falhou. Tente novamente.",
       };
@@ -347,53 +300,53 @@ export async function requestPasswordResetAction(
     /*
      * Rate limit nativo do Supabase.
      */
-    if (error?.code === "over_request_rate_limit" || error?.status === 429) {
+    if (
+      error?.code === "over_request_rate_limit" ||
+      error?.status === 429
+    ) {
       return {
         ok: false,
-
         code: "RATE_LIMITED",
-
         message: "Muitas tentativas. Aguarde e tente novamente.",
       };
     }
 
     /*
-     * Importante:
-     *
      * Não devolvemos erro específico do Auth.
      *
-     * Isso reduz risco de enumeração
-     * de usuários por comportamento diferente.
+     * Isso reduz risco de enumeração de usuários
+     * por comportamento diferente.
      */
     if (error) {
-      console.warn("Falha interna ao solicitar recuperação de senha.", {
-        event: "auth.password_reset.request_failed",
-
-        authCode: error.code,
-
-        authStatus: error.status,
-
-        ...(process.env.NODE_ENV === "development"
-          ? {
-              authMessage: error.message,
-
-              authName: error.name,
-            }
-          : {}),
-      });
+      console.warn(
+        "Falha interna ao solicitar recuperação de senha.",
+        {
+          event: "auth.password_reset.request_failed",
+          authCode: error.code,
+          authStatus: error.status,
+          ...(process.env.NODE_ENV === "development"
+            ? {
+                authMessage: error.message,
+                authName: error.name,
+              }
+            : {}),
+        },
+      );
     }
   } catch (error) {
     /*
-     * Mesma resposta externa inclusive
-     * para falhas inesperadas do Auth.
+     * Mesma resposta externa inclusive para
+     * falhas inesperadas do Auth.
      *
      * Não exponha detalhes do backend.
      */
-    console.error("Erro inesperado ao solicitar recuperação de senha.", {
-      event: "auth.password_reset.unexpected_error",
-
-      error: error instanceof Error ? error.message : "unknown",
-    });
+    console.error(
+      "Erro inesperado ao solicitar recuperação de senha.",
+      {
+        event: "auth.password_reset.unexpected_error",
+        error: error instanceof Error ? error.message : "unknown",
+      },
+    );
   }
 
   /*
@@ -407,7 +360,6 @@ export async function requestPasswordResetAction(
    */
   return {
     ok: true,
-
     message: GENERIC_RESET_MESSAGE,
   };
 }
@@ -427,6 +379,8 @@ export async function requestPasswordResetAction(
  * → requireAuthenticatedUser()
  * → getUser()
  * → rateLimit sensitiveMutation
+ * → getClaims()
+ * → AMR recovery
  * → updateUser()
  * → Audit Log
  * → global sign-out
@@ -439,16 +393,14 @@ export async function completePasswordResetAction(
   /*
    * 1. Validação do cliente.
    */
-  const parsed = completePasswordResetSchema.safeParse(input);
+  const parsed =
+    completePasswordResetSchema.safeParse(input);
 
   if (!parsed.success) {
     return {
       ok: false,
-
       code: "INVALID_INPUT",
-
       message: "Revise os dados informados.",
-
       fieldErrors: parsed.error.flatten().fieldErrors,
     };
   }
@@ -467,11 +419,8 @@ export async function completePasswordResetAction(
   if (!auth.ok) {
     return {
       ok: false,
-
       code: auth.code,
-
       message: auth.message,
-
       retryAfterSeconds: auth.retryAfterSeconds,
     };
   }
@@ -487,36 +436,37 @@ export async function completePasswordResetAction(
    * Uma sessão comum de login NÃO pode usar
    * esta Server Action para redefinir senha.
    */
-  const { data: claimsData, error: claimsError } =
-    await supabase.auth.getClaims();
+  const {
+    data: claimsData,
+    error: claimsError,
+  } = await supabase.auth.getClaims();
 
   const recoveryUserId = claimsError
     ? null
-    : getRecoverySessionUserId(claimsData?.claims);
+    : getRecoverySessionUserId(
+        claimsData?.claims,
+      );
 
-  if (!recoveryUserId || recoveryUserId !== userId) {
+  if (
+    !recoveryUserId ||
+    recoveryUserId !== userId
+  ) {
     console.warn(
       "Tentativa de redefinição de senha sem sessão de recovery válida.",
       {
-        event: "auth.password_reset.invalid_recovery_session",
-
+        event:
+          "auth.password_reset.invalid_recovery_session",
         actorUserId: userId,
-
-        claimsError: claimsError ? true : false,
+        claimsError: Boolean(claimsError),
       },
     );
 
     await recordAuditEvent({
       eventType: "auth.password_reset",
-
       outcome: "denied",
-
       actorUserId: userId,
-
       resourceType: "auth_user",
-
       resourceId: userId,
-
       metadata: {
         reason: "invalid_recovery_session",
       },
@@ -524,16 +474,14 @@ export async function completePasswordResetAction(
 
     return {
       ok: false,
-
       code: "INVALID_RECOVERY_SESSION",
-
       message:
         "A sessão de recuperação é inválida ou expirou. Solicite um novo link.",
     };
   }
 
   /*
-   * 3. Alteração da senha.
+   * 4. Alteração da senha.
    *
    * Não recebemos userId do cliente.
    * Não usamos supabaseAdmin.
@@ -541,23 +489,19 @@ export async function completePasswordResetAction(
    * updateUser atua sobre o usuário
    * autenticado da própria sessão.
    */
-  const { error: updateError } = await supabase.auth.updateUser({
-    password: parsed.data.password,
-  });
+  const { error: updateError } =
+    await supabase.auth.updateUser({
+      password: parsed.data.password,
+    });
 
   if (updateError) {
     if (updateError.code === "same_password") {
       await recordAuditEvent({
         eventType: "auth.password_reset",
-
         outcome: "denied",
-
         actorUserId: userId,
-
         resourceType: "auth_user",
-
         resourceId: userId,
-
         metadata: {
           reason: "same_password",
         },
@@ -565,24 +509,24 @@ export async function completePasswordResetAction(
 
       return {
         ok: false,
-
         code: "RESET_FAILED",
-
-        message: "A nova senha deve ser diferente da senha atual.",
+        message:
+          "A nova senha deve ser diferente da senha atual.",
       };
     }
+
     console.warn("Falha ao redefinir senha.", {
-      event: "auth.password_reset.update_failed",
-
+      event:
+        "auth.password_reset.update_failed",
       authCode: updateError.code,
-
       authStatus: updateError.status,
-
-      ...(process.env.NODE_ENV === "development"
+      ...(process.env.NODE_ENV ===
+      "development"
         ? {
-            authMessage: updateError.message,
-
-            authName: updateError.name,
+            authMessage:
+              updateError.message,
+            authName:
+              updateError.name,
           }
         : {}),
     });
@@ -594,84 +538,81 @@ export async function completePasswordResetAction(
      */
     await recordAuditEvent({
       eventType: "auth.password_reset",
-
       outcome: "failure",
-
       actorUserId: userId,
-
       resourceType: "auth_user",
-
       resourceId: userId,
     });
 
     return {
       ok: false,
-
       code: "RESET_FAILED",
-
       message:
         "Não foi possível redefinir a senha. Solicite um novo link e tente novamente.",
     };
   }
 
   /*
-   * 4. Audit Log da operação concluída.
+   * 5. Audit Log da operação concluída.
    */
   await recordAuditEvent({
     eventType: "auth.password_reset",
-
     outcome: "success",
-
     actorUserId: userId,
-
     resourceType: "auth_user",
-
     resourceId: userId,
   });
 
   /*
-   * 5. Após recovery, revogamos refresh
+   * 6. Após recovery, revogamos refresh
    * tokens globalmente.
    *
    * A senha já foi alterada neste ponto.
    * Portanto uma falha de logout não pode
    * fazer a action afirmar que o reset falhou.
    */
-  const { error: signOutError } = await supabase.auth.signOut({
-    scope: "global",
-  });
+  const { error: signOutError } =
+    await supabase.auth.signOut({
+      scope: "global",
+    });
 
   if (signOutError) {
-    console.error("Senha redefinida, mas o sign-out global falhou.", {
-      event: "auth.password_reset.global_signout_failed",
-
-      authCode: signOutError.code,
-
-      authStatus: signOutError.status,
-    });
+    console.error(
+      "Senha redefinida, mas o sign-out global falhou.",
+      {
+        event:
+          "auth.password_reset.global_signout_failed",
+        authCode: signOutError.code,
+        authStatus: signOutError.status,
+      },
+    );
 
     /*
      * Tenta pelo menos invalidar a
      * sessão local/cookies atuais.
      */
-    const { error: localSignOutError } = await supabase.auth.signOut({
-      scope: "local",
-    });
+    const { error: localSignOutError } =
+      await supabase.auth.signOut({
+        scope: "local",
+      });
 
     if (localSignOutError) {
-      console.error("Sign-out local também falhou após redefinição de senha.", {
-        event: "auth.password_reset.local_signout_failed",
-
-        authCode: localSignOutError.code,
-
-        authStatus: localSignOutError.status,
-      });
+      console.error(
+        "Sign-out local também falhou após redefinição de senha.",
+        {
+          event:
+            "auth.password_reset.local_signout_failed",
+          authCode:
+            localSignOutError.code,
+          authStatus:
+            localSignOutError.status,
+        },
+      );
     }
   }
 
   return {
     ok: true,
-
     message:
       "Senha redefinida com sucesso. Faça login novamente com a nova senha.",
   };
