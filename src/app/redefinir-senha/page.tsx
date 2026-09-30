@@ -11,6 +11,10 @@ import {
 } from "@/components/ui/card";
 
 import {
+  getRecoverySessionUserId,
+} from "@/lib/auth/recovery-session";
+
+import {
   createServerSupabase,
 } from "@/lib/supabase/server";
 
@@ -21,24 +25,45 @@ export default async function RedefinirSenhaPage() {
     await createServerSupabase();
 
   /*
-   * Esta página só deve existir para um usuário
-   * que chegou pelo fluxo de recovery e possui
-   * uma sessão válida.
-   *
-   * getUser() valida a identidade no Supabase Auth.
+   * A página exige uma sessão real e,
+   * além disso, uma sessão originada
+   * especificamente do fluxo de recovery.
    */
   const {
     data: {
       user,
     },
-    error,
+    error: userError,
   } =
     await supabase.auth
       .getUser();
 
   if (
-    error ||
+    userError ||
     !user
+  ) {
+    redirect(
+      "/login?recovery=invalid",
+    );
+  }
+
+  const {
+    data: claimsData,
+    error: claimsError,
+  } =
+    await supabase.auth
+      .getClaims();
+
+  const recoveryUserId =
+    claimsError
+      ? null
+      : getRecoverySessionUserId(
+          claimsData?.claims,
+        );
+
+  if (
+    !recoveryUserId ||
+    recoveryUserId !== user.id
   ) {
     redirect(
       "/login?recovery=invalid",
