@@ -33,71 +33,104 @@ const supabasePublishableKey: string = requireEnv(
   "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
 );
 
-function isDashboardPath(pathname: string): boolean {
+/*
+ * ============================================================
+ * PROTECTED PATHS
+ * ============================================================
+ */
+
+function isProtectedPath(
+  pathname: string,
+): boolean {
   return (
     pathname === "/dashboard" ||
-    pathname.startsWith("/dashboard/")
+    pathname.startsWith("/dashboard/") ||
+    pathname === "/settings" ||
+    pathname.startsWith("/settings/")
   );
 }
 
-function isAuthPath(pathname: string): boolean {
-  return (
-    pathname === "/login" ||
-    pathname.startsWith("/login/") ||
-    pathname === "/cadastro" ||
-    pathname.startsWith("/cadastro/")
-  );
-}
+/*
+ * ============================================================
+ * RESPONSE COOKIES
+ * ============================================================
+ */
 
 function copyResponseCookies(
   source: NextResponse,
   destination: NextResponse,
 ): NextResponse {
-  source.cookies.getAll().forEach((cookie) => {
-    destination.cookies.set(
-      cookie.name,
-      cookie.value,
-      cookie,
+  source.cookies
+    .getAll()
+    .forEach(
+      (cookie) => {
+        destination.cookies.set(
+          cookie.name,
+          cookie.value,
+          cookie,
+        );
+      },
     );
-  });
 
   return destination;
 }
 
+/*
+ * ============================================================
+ * UPDATE SESSION
+ * ============================================================
+ */
+
 export async function updateSession(
   request: NextRequest,
 ): Promise<NextResponse> {
-  let supabaseResponse = NextResponse.next({
-    request,
-  });
+  let supabaseResponse =
+    NextResponse.next({
+      request,
+    });
 
   const cookieMethods: CookieMethodsServer = {
     getAll() {
       return request.cookies.getAll();
     },
 
-    setAll(cookiesToSet) {
+    setAll(
+      cookiesToSet,
+    ) {
       /*
-       * Atualiza os cookies da requisição para que
-       * o restante da execução veja a sessão renovada.
-       */
-      cookiesToSet.forEach(({ name, value }) => {
-        request.cookies.set(name, value);
-      });
-
-      /*
-       * Recria a resposta com a requisição atualizada.
-       */
-      supabaseResponse = NextResponse.next({
-        request,
-      });
-
-      /*
-       * Envia os cookies renovados ao navegador,
-       * preservando as opções definidas pelo Supabase.
+       * Atualiza também a request atual.
        */
       cookiesToSet.forEach(
-        ({ name, value, options }) => {
+        ({
+          name,
+          value,
+        }) => {
+          request.cookies.set(
+            name,
+            value,
+          );
+        },
+      );
+
+      /*
+       * Recria a resposta utilizando
+       * os cookies atualizados.
+       */
+      supabaseResponse =
+        NextResponse.next({
+          request,
+        });
+
+      /*
+       * Persiste os cookies atualizados
+       * no navegador.
+       */
+      cookiesToSet.forEach(
+        ({
+          name,
+          value,
+          options,
+        }) => {
           supabaseResponse.cookies.set(
             name,
             value,
@@ -108,40 +141,64 @@ export async function updateSession(
     },
   };
 
-  const supabase = createServerClient(
-    supabaseUrl,
-    supabasePublishableKey,
-    {
-      cookies: cookieMethods,
-    },
-  );
+  const supabase =
+    createServerClient(
+      supabaseUrl,
+      supabasePublishableKey,
+      {
+        cookies:
+          cookieMethods,
+      },
+    );
 
   /*
-   * Não use getSession() como prova de identidade.
-   * getClaims() valida o token.
+   * getClaims() valida criptograficamente
+   * o access token.
+   *
+   * Não utilizamos getSession()
+   * como prova de identidade.
    */
   const {
-    data: claimsData,
-    error: claimsError,
-  } = await supabase.auth.getClaims();
+    data:
+      claimsData,
+    error:
+      claimsError,
+  } =
+    await supabase.auth
+      .getClaims();
 
-  const userId = claimsData?.claims?.sub;
+  const userId =
+    claimsData?.claims?.sub;
 
   const isAuthenticated =
     !claimsError &&
-    typeof userId === "string" &&
+    typeof userId ===
+      "string" &&
     userId.length > 0;
 
-  const { pathname, search } = request.nextUrl;
+  const {
+    pathname,
+    search,
+  } =
+    request.nextUrl;
 
+  /*
+   * Rotas privadas sem JWT válido.
+   */
   if (
     !isAuthenticated &&
-    isDashboardPath(pathname)
+    isProtectedPath(
+      pathname,
+    )
   ) {
-    const redirectUrl = request.nextUrl.clone();
+    const redirectUrl =
+      request.nextUrl.clone();
 
-    redirectUrl.pathname = "/login";
-    redirectUrl.search = "";
+    redirectUrl.pathname =
+      "/login";
+
+    redirectUrl.search =
+      "";
 
     redirectUrl.searchParams.set(
       "redirect",
@@ -149,7 +206,9 @@ export async function updateSession(
     );
 
     const redirectResponse =
-      NextResponse.redirect(redirectUrl);
+      NextResponse.redirect(
+        redirectUrl,
+      );
 
     return copyResponseCookies(
       supabaseResponse,
@@ -157,23 +216,27 @@ export async function updateSession(
     );
   }
 
-  if (
-    isAuthenticated &&
-    isAuthPath(pathname)
-  ) {
-    const redirectUrl = request.nextUrl.clone();
-
-    redirectUrl.pathname = "/dashboard";
-    redirectUrl.search = "";
-
-    const redirectResponse =
-      NextResponse.redirect(redirectUrl);
-
-    return copyResponseCookies(
-      supabaseResponse,
-      redirectResponse,
-    );
-  }
+  /*
+   * IMPORTANTE:
+   *
+   * Não redirecionamos automaticamente
+   * /login → /dashboard apenas porque
+   * getClaims() encontrou um JWT válido.
+   *
+   * Após logout global, um access token
+   * já emitido pode permanecer válido
+   * até expirar.
+   *
+   * Fazer esse redirect aqui poderia
+   * criar:
+   *
+   * /dashboard
+   * → /login
+   * → /dashboard
+   *
+   * usando uma sessão que já perdeu
+   * o refresh token.
+   */
 
   return supabaseResponse;
 }
