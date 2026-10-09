@@ -17,14 +17,21 @@ import {
   validateUploadSignature,
 } from "@/lib/security/file-upload";
 
+import {
+  isNormalizableImageMimeType,
+  normalizeUploadedImage,
+} from "@/lib/security/image-normalization";
+
+import {
+  createAdminSupabase,
+} from "@/lib/supabase/admin";
+
 type AuthenticatedUploadOptions = {
   file: unknown;
 
   /**
-   * Deve ser definido pelo código server-side.
-   *
-   * Nunca permita que o cliente escolha
-   * livremente o bucket.
+   * O bucket deve ser escolhido
+   * exclusivamente pelo servidor.
    */
   bucket: string;
 
@@ -59,7 +66,7 @@ export async function uploadAuthenticatedFile(
   options: AuthenticatedUploadOptions,
 ): Promise<AuthenticatedUploadResult> {
   /*
-   * 1. Validação estrutural barata.
+   * 1. Validação estrutural.
    */
   const validation =
     validateUploadFile(
@@ -77,10 +84,6 @@ export async function uploadAuthenticatedFile(
     return validation;
   }
 
-  /*
-   * O bucket vem do servidor,
-   * mas ainda validamos defensivamente.
-   */
   if (
     !isSafeBucketName(
       options.bucket,
@@ -110,11 +113,11 @@ export async function uploadAuthenticatedFile(
 
   const {
     userId,
-    supabase,
   } = auth.context;
 
   /*
-   * 3. Validação do conteúdo real.
+   * 3. Verificação inicial
+   * da assinatura do arquivo.
    */
   const signatureValidation =
     await validateUploadSignature(
@@ -128,36 +131,120 @@ export async function uploadAuthenticatedFile(
   }
 
   /*
-   * 4. Path seguro gerado pelo servidor.
-   *
-   * Nunca usamos file.name.
+   * Valores padrão para documentos
+   * que não passam por normalização.
    */
-  const objectPath =
-    `${userId}/${randomUUID()}.${validation.safeExtension}`;
+  let uploadBody:
+    | File
+    | Buffer =
+    validation.file;
+
+  let storedMimeType =
+    validation.file.type;
+
+  let storedExtension =
+    validation.safeExtension;
+
+  let storedSizeBytes =
+    validation.file.size;
+
+  let normalized = false;
+
+  let imageWidth:
+    | number
+    | undefined;
+
+  let imageHeight:
+    | number
+    | undefined;
 
   /*
-   * 5. Upload usando o cliente autenticado.
+   * 4. Imagens nunca são persistidas
+   * diretamente.
    *
-   * Storage RLS continua sendo aplicado.
+   * JPEG / PNG / WebP:
+   *
+   * arquivo recebido
+   *   -> Sharp
+   *   -> decode
+   *   -> validação
+   *   -> remoção de metadata
+   *   -> auto-orient
+   *   -> sRGB
+   *   -> novo WebP
    */
+  if (
+    isNormalizableImageMimeType(
+      validation.file.type,
+    )
+  ) {
+    const normalizedImage =
+      await normalizeUploadedImage(
+        validation.file,
+      );
+
+    if (
+      !normalizedImage.ok
+    ) {
+      return normalizedImage;
+    }
+
+    uploadBody =
+      normalizedImage.buffer;
+
+    storedMimeType =
+      normalizedImage.mimeType;
+
+    storedExtension =
+      normalizedImage.safeExtension;
+
+    storedSizeBytes =
+      normalizedImage.sizeBytes;
+
+    imageWidth =
+      normalizedImage.width;
+
+    imageHeight =
+      normalizedImage.height;
+
+    normalized = true;
+  }
+
+  /*
+   * 5. Path sempre gerado
+   * pelo servidor.
+   */
+  const objectPath =
+    `${userId}/${randomUUID()}.${storedExtension}`;
+
+  /*
+   * 6. O cliente administrativo existe
+   * somente no servidor.
+   *
+   * O usuário autenticado não precisa
+   * receber INSERT direto no Storage.
+   */
+  const adminSupabase =
+    createAdminSupabase();
+
   const {
     data,
     error,
-  } = await supabase.storage
+  } = await adminSupabase.storage
     .from(options.bucket)
     .upload(
       objectPath,
-      validation.file,
+      uploadBody,
       {
         contentType:
-          validation.file.type,
+          storedMimeType,
 
         upsert: false,
       },
     );
 
   /*
-   * 6. Falha no Storage.
+   * 7. Falha no Storage.
    */
   if (error) {
     console.warn(
@@ -174,16 +261,6 @@ export async function uploadAuthenticatedFile(
       },
     );
 
-    /*
-     * Auditoria da falha.
-     *
-     * Não armazenamos:
-     * - conteúdo;
-     * - nome original;
-     * - token;
-     * - cookie;
-     * - signed URL.
-     */
     await recordAuditEvent({
       eventType:
         "storage.file_uploaded",
@@ -204,11 +281,33 @@ export async function uploadAuthenticatedFile(
         bucket:
           options.bucket,
 
-        mimeType:
+        originalMimeType:
           validation.file.type,
 
-        sizeBytes:
+        storedMimeType,
+
+        originalSizeBytes:
           validation.file.size,
+
+        storedSizeBytes,
+
+        normalized,
+
+        ...(imageWidth !==
+        undefined
+          ? {
+              width:
+                imageWidth,
+            }
+          : {}),
+
+        ...(imageHeight !==
+        undefined
+          ? {
+              height:
+                imageHeight,
+            }
+          : {}),
       },
     });
 
@@ -222,7 +321,7 @@ export async function uploadAuthenticatedFile(
   }
 
   /*
-   * 7. Auditoria do upload bem-sucedido.
+   * 8. Auditoria de sucesso.
    */
   await recordAuditEvent({
     eventType:
@@ -244,18 +343,42 @@ export async function uploadAuthenticatedFile(
       bucket:
         options.bucket,
 
-      mimeType:
+      originalMimeType:
         validation.file.type,
 
-      sizeBytes:
+      storedMimeType,
+
+      originalSizeBytes:
         validation.file.size,
+
+      storedSizeBytes,
+
+      normalized,
+
+      ...(imageWidth !==
+      undefined
+        ? {
+            width:
+              imageWidth,
+          }
+        : {}),
+
+      ...(imageHeight !==
+      undefined
+        ? {
+            height:
+              imageHeight,
+          }
+        : {}),
     },
   });
 
   return {
     ok: true,
+
     bucket:
       options.bucket,
+
     path:
       data.path,
   };
