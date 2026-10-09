@@ -1,12 +1,28 @@
 -- ============================================================
 -- TEMPLATE: STORAGE PRIVADO POR USUÁRIO
 --
+-- Arquitetura:
+--
+--   CLIENT
+--     -> SERVER ACTION
+--     -> autenticação
+--     -> rate limit
+--     -> validação do arquivo
+--     -> validação da assinatura
+--     -> upload server-side
+--     -> Storage
+--
+-- O cliente autenticado NÃO possui permissão
+-- direta para INSERT, UPDATE ou DELETE.
+--
 -- Antes de usar:
+--
 -- 1. Substitua BUCKET_NAME pelo nome real do bucket.
 -- 2. Crie o bucket como PRIVADO.
--- 3. Configure MIME types e limite de tamanho no bucket.
+-- 3. Configure MIME types permitidos no bucket.
+-- 4. Configure limite de tamanho no bucket.
 --
--- Path esperado pela aplicação:
+-- Path gerado pelo servidor:
 --
 --   auth.uid()/UUID.ext
 --
@@ -22,29 +38,40 @@
 -- ============================================================
 -- INSERT
 --
--- Usuário autenticado só pode enviar arquivos para
--- uma pasta cujo primeiro segmento seja o próprio auth.uid().
+-- NÃO existe policy de INSERT para authenticated.
+--
+-- Uploads devem passar exclusivamente pela camada server-side,
+-- que:
+--
+-- - autentica o usuário;
+-- - aplica rate limit;
+-- - valida tamanho;
+-- - valida MIME;
+-- - valida extensão;
+-- - valida assinatura;
+-- - gera o path;
+-- - registra auditoria;
+-- - usa a secret key somente no servidor.
+--
+-- Assim, um cliente não consegue contornar essas validações
+-- enviando o arquivo diretamente para o Supabase Storage.
 -- ============================================================
-
-create policy "BUCKET_NAME_insert_own_folder"
-on storage.objects
-for insert
-to authenticated
-with check (
-  bucket_id = 'BUCKET_NAME'
-  and
-  (storage.foldername(name))[1]
-    = (select auth.uid()::text)
-);
 
 
 -- ============================================================
 -- SELECT
 --
--- O usuário só pode ler arquivos:
--- - do bucket correto;
--- - cujo owner_id seja ele mesmo;
--- - armazenados na própria pasta.
+-- O usuário autenticado pode ler somente objetos cujo
+-- primeiro segmento do path seja seu próprio auth.uid().
+--
+-- Não utilizamos owner_id aqui porque objetos criados através
+-- de uma secret/service key não recebem o usuário final como
+-- owner_id.
+--
+-- O vínculo de propriedade da aplicação é o path gerado
+-- exclusivamente pelo servidor:
+--
+--   userId/UUID.ext
 -- ============================================================
 
 create policy "BUCKET_NAME_select_own_files"
@@ -53,7 +80,6 @@ for select
 to authenticated
 using (
   bucket_id = 'BUCKET_NAME'
-  and owner_id = (select auth.uid()::text)
   and
   (storage.foldername(name))[1]
     = (select auth.uid()::text)
@@ -63,37 +89,35 @@ using (
 -- ============================================================
 -- DELETE
 --
--- O usuário só pode apagar os próprios arquivos.
+-- NÃO existe policy de DELETE para authenticated.
+--
+-- Exclusões são mutações e devem passar por código server-side
+-- para permitir:
+--
+-- - autenticação;
+-- - autorização;
+-- - validação do path;
+-- - rate limit quando necessário;
+-- - auditoria.
 -- ============================================================
-
-create policy "BUCKET_NAME_delete_own_files"
-on storage.objects
-for delete
-to authenticated
-using (
-  bucket_id = 'BUCKET_NAME'
-  and owner_id = (select auth.uid()::text)
-  and
-  (storage.foldername(name))[1]
-    = (select auth.uid()::text)
-);
 
 
 -- ============================================================
 -- UPDATE
 --
--- NÃO criamos policy de UPDATE por padrão.
+-- NÃO existe policy de UPDATE para authenticated.
 --
--- Consequência:
+-- Consequências:
 --
---   UPDATE / overwrite / upsert de objetos
---   permanece bloqueado.
+-- - overwrite direto permanece bloqueado;
+-- - upsert direto permanece bloqueado;
+-- - o cliente não consegue substituir objetos existentes.
 --
 -- Para substituir um arquivo:
 --
---   1. envie um novo objeto;
+--   1. envie um novo objeto através do servidor;
 --   2. atualize a referência no domínio;
---   3. remova o antigo quando apropriado.
---
--- Isso reduz risco de sobrescrita acidental/maliciosa.
+--   3. remova o objeto anterior através do servidor.
 -- ============================================================
+
+
