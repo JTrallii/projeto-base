@@ -1,2453 +1,669 @@
-# 🛡️ SaaS Base — Next.js + Supabase
-
-Base reutilizável para desenvolvimento de aplicações SaaS utilizando **Next.js 15, TypeScript, Supabase e PostgreSQL**, estruturada com foco em segurança, autenticação, autorização, controle de acesso, versionamento de banco de dados e operações server-side.
-
-> Este projeto não tem como objetivo ser apenas um template visual.
->
-> A proposta é servir como uma base técnica reutilizável para novos sistemas, evitando que autenticação, autorização, RLS, rate limiting, migrations e outros controles críticos precisem ser reconstruídos do zero a cada projeto.
-
----
-
-# 📌 Status do projeto
-
-Legenda:
-
-* ✅ Implementado
-* 🟡 Parcial / precisa ser adaptado
-* 🧩 Estrutura preparada, mas ainda sem uso completo
-* ⏳ Planejado
-* ⚠️ Requer configuração em cada novo projeto
-
-| Recurso                                     | Status               |
-| ------------------------------------------- | -------------------- |
-| Next.js 15 + App Router                     | ✅                    |
-| TypeScript                                  | ✅                    |
-| Supabase Auth                               | ✅                    |
-| Cliente Supabase Browser                    | ✅                    |
-| Cliente Supabase Server/SSR                 | ✅                    |
-| Cliente Supabase Admin                      | ✅                    |
-| Middleware de autenticação                  | ✅                    |
-| Login via Server Action                     | ✅                    |
-| Cadastro via Server Action                  | ✅                    |
-| Logout via Server Action                    | ✅                    |
-| Validação server-side com Zod               | ✅                    |
-| Redirect interno protegido                  | ✅                    |
-| Rate limiting com Upstash                   | ✅                    |
-| Hash HMAC dos identificadores do rate limit | ✅                    |
-| Detecção controlada do IP do cliente        | ✅                    |
-| Migrations Supabase                         | 🟡                   |
-| RLS habilitado via template de migration    | 🟡                   |
-| Policies completas por tabela               | ⏳                    |
-| Trigger Auth → tabela interna de usuários   | ⏳                    |
-| Helpers centrais de autorização             | ⏳                    |
-| Auditoria persistente                       | ⏳                    |
-| Upload seguro / Storage                     | ⏳                    |
-| Validação especial de SVG                   | ⏳                    |
-| Cloudflare Turnstile / CAPTCHA              | ⏳                    |
-| CSP e security headers finais               | ⏳                    |
-| Proteção contra abuso em reset de senha     | 🧩                   |
-| Proteção contra abuso em convites           | 🧩                   |
-| Exportação segura                           | 🧩                   |
-| Testes automatizados                        | ⏳                    |
-| CI                                          | ⏳                    |
-| Observabilidade / monitoramento             | ⏳                    |
-| Checklist de provisionamento                | ✅ documentado abaixo |
-
----
-
-# 🧱 Stack
-
-## Aplicação
-
-* Next.js 15
-* React
-* TypeScript
-* App Router
-* Server Actions
-
-## Backend / Auth / Banco
-
-* Supabase
-* Supabase Auth
-* PostgreSQL
-* Row Level Security
-* Supabase SSR
-* Supabase CLI / migrations
-
-## Segurança
-
-* Zod
-* Upstash Redis
-* Upstash Rate Limit
-* HMAC SHA-256
-* Server-only modules
-
-## UI
-
-* Tailwind CSS
-* Radix UI
-* Lucide React
-* Sonner
-
----
-
-# 🧠 Princípios da arquitetura
-
-Esta base segue alguns princípios obrigatórios.
-
-## 1. O client nunca é uma fronteira de segurança
-
-Um botão oculto não impede uma operação.
-
-Uma página protegida não impede que uma Server Action seja chamada diretamente.
-
-Uma validação feita somente no formulário não protege o backend.
-
-Por isso:
-
-```text
-CLIENT
-  │
-  │ dados não confiáveis
-  ▼
-SERVER ACTION / ROUTE HANDLER
-  │
-  ├── validar entrada
-  ├── autenticar usuário
-  ├── autorizar operação
-  ├── aplicar rate limit
-  ├── executar operação
-  ├── registrar auditoria
-  └── retornar resposta segura
-```
-
----
-
-# 🔐 Fluxo obrigatório para operações sensíveis
-
-Toda operação que altera dados deve seguir, com pequenas variações, este caminho:
-
-```text
-REQUISIÇÃO
-   │
-   ▼
-1. VALIDAR INPUT
-   │
-   ▼
-2. IDENTIFICAR USUÁRIO
-   │
-   ▼
-3. VERIFICAR AUTORIZAÇÃO
-   │
-   ▼
-4. RATE LIMIT
-   │
-   ▼
-5. EXECUTAR OPERAÇÃO
-   │
-   ▼
-6. AUDITORIA
-   │
-   ▼
-7. REVALIDATE / REDIRECT
-   │
-   ▼
-RESPOSTA SEGURA
-```
-
-**Middleware não substitui autorização dentro da action.**
-
-O middleware protege principalmente a navegação e gerenciamento da sessão.
-
-A própria ação ainda deve validar quem está tentando executar a operação.
-
----
-
-# 📂 Estrutura principal
-
-```text
-src/
-│
-├── actions/
-│   └── auth.ts
-│
-├── app/
-│   ├── cadastro/
-│   ├── dashboard/
-│   ├── login/
-│   └── api/
-│
-├── components/
-│
-├── contexts/
-│   └── AuthContext.tsx
-│
-├── lib/
-│   │
-│   ├── auth/
-│   │   └── get-current-user.ts
-│   │
-│   ├── security/
-│   │   ├── client-ip.ts
-│   │   └── rate-limit.ts
-│   │
-│   └── supabase/
-│       ├── admin.ts
-│       ├── middleware.ts
-│       ├── server.ts
-│       ├── supabase.ts
-│       └── utils.ts
-│
-├── middleware.ts
-│
-└── types/
-
-supabase/
-│
-├── migrations/
-└── config.toml
-```
-
----
-
-# ⚠️ Arquivos que precisam de limpeza
-
-## `src/app/login/actions.ts`
-
-Existe atualmente uma implementação antiga de login dentro de:
-
-```text
-src/app/login/actions.ts
-```
-
-O caminho oficial da autenticação deve ser:
-
-```text
-src/actions/auth.ts
-```
-
-Portanto, antes de considerar a base finalizada, o arquivo antigo deve ser removido depois de confirmar que nenhum componente ainda depende dele.
-
-Não mantenha duas implementações diferentes da mesma operação de autenticação.
-
----
-
-# 🔑 Variáveis de ambiente
+# SaaS Base — Next.js 15 + Supabase
+
+Base reutilizável para iniciar aplicações SaaS com **Next.js, React, TypeScript, Supabase Auth, PostgreSQL e Upstash Redis**, priorizando segurança server-side e uma estrutura que possa ser adaptada a diferentes domínios de negócio.
+
+O repositório fornece a fundação técnica de autenticação, sessão, rate limiting, validação, auditoria e utilitários de segurança. **Não é um SaaS de domínio completo**: regras de negócio, autorização por organização/tenant, modelo definitivo do banco e funcionalidades específicas devem ser construídos no projeto derivado.
+
+## 1. Status real da implementação
+
+A tabela diferencia código existente de recursos que ainda dependem de configuração ou de uma etapa posterior no Supabase.
+
+| Recurso | Situação | Observação |
+|---|---|---|
+| Next.js App Router + TypeScript | Implementado | Next.js 15.5.27, React 19.2.8 e TypeScript strict |
+| Layout e componentes reutilizáveis | Implementado | Tailwind CSS, Radix UI, componentes de interface e tema escuro |
+| Supabase Browser Client | Implementado | Usa URL e Publishable Key |
+| Supabase Server Client | Implementado | Usa cookies SSR e Publishable Key |
+| Supabase Admin Client | Implementado | Server-only; usa SUPABASE_SECRET_KEY |
+| Cadastro, login e logout | Implementado no código | Server Actions com Zod, CAPTCHA e rate limit |
+| Proteção de rotas | Implementado | Middleware protege /dashboard e /settings |
+| Recuperação de senha | Implementado no código | Solicitação, callback e redefinição com sessão de recovery |
+| Alteração de senha | Implementado no código | Senha atual, reautenticação quando necessária e encerramento global de sessões |
+| Rate limiting | Implementado no código | Upstash Redis, escopos separados e identificadores protegidos por HMAC |
+| Identificação de IP confiável | Implementado no código | Desenvolvimento, Vercel ou header de proxy configurado |
+| Cloudflare Turnstile | Integração implementada | Chaves e validação no Supabase Auth precisam estar configuradas em cada ambiente |
+| CSP e security headers | Configurados | A política atual ainda permite unsafe-inline; unsafe-eval é permitido em desenvolvimento |
+| Auditoria server-side | Infraestrutura implementada | Helper e migration existem; aplicação da migration no Supabase precisa ser feita e verificada |
+| Validação de arquivos | Implementada como helper | Não existe ainda uma tela ou Server Action pública de upload conectada ao helper |
+| Normalização de imagens | Implementada como helper | JPEG, PNG e WebP são processados e armazenados como WebP |
+| Storage privado | Migration e template criados | A aplicação remota e os testes de policies continuam pendentes |
+| Keep-alive do Supabase | Função SQL criada | Não existe agendamento externo configurado; a função não executa sozinha |
+| Autorização genérica por role/permissão/tenant | Não implementada | Existe apenas um helper de resultado de autorização |
+| Modelo definitivo e genérico do banco | Pendente | Migrations antigas precisam ser reorganizadas em conjunto |
+| Testes automatizados e CI | Não implementados | Não há diretório de testes nem workflow GitHub Actions |
+| Tipos gerados do banco Supabase | Não implementados | src/types/index.ts contém apenas tipos TypeScript da aplicação |
+
+**Importante:** “implementado no código” não significa que as variáveis, serviços externos, configurações do painel Supabase ou migrations já estejam configurados em produção.
+
+## 2. Stack e versões
+
+### Aplicação
+
+- Next.js 15.5.27
+- React 19.2.8
+- TypeScript
+- App Router
+- Server Actions
+- Tailwind CSS 3
+- Radix UI
+- Lucide React
+- Sonner
+
+### Backend e serviços
+
+- Supabase Auth
+- Supabase SSR
+- Supabase JavaScript Client
+- PostgreSQL
+- Supabase Storage
+- Supabase CLI 2.120.0
+- Upstash Redis
+- Upstash Rate Limit
+
+### Segurança e processamento
+
+- Zod para validação de entrada
+- HMAC SHA-256 para proteger identificadores usados no rate limit
+- Sharp para decodificação e normalização de imagens
+- Cloudflare Turnstile para CAPTCHA
+- módulos server-only para impedir importação acidental de código privilegiado no browser
+
+O package.json é a fonte das versões e dependências. O repositório contém package-lock.json e pnpm-lock.yaml; a escolha de um único gerenciador de pacotes ainda precisa ser padronizada.
 
-Crie:
-
-```bash
-.env.local
-```
+## 3. Arquitetura e fronteiras de segurança
 
-Nunca faça commit desse arquivo.
+A interface é considerada uma origem não confiável. Esconder um botão ou proteger uma página não impede que alguém tente chamar uma Server Action diretamente.
 
-Exemplo:
+Fluxo de referência para operações autenticadas:
 
-```env
-# ==================================================
-# SUPABASE
-# ==================================================
+1. Browser envia dados não confiáveis.
+2. Server Action valida a entrada com Zod.
+3. A action confirma a identidade no Supabase Auth.
+4. O rate limit é aplicado quando a operação exige essa proteção.
+5. A regra de autorização específica da funcionalidade deve ser verificada.
+6. A operação usa o Supabase Server Client e permanece sujeita à RLS.
+7. Eventos sensíveis são enviados ao helper de auditoria.
+8. A action retorna uma resposta controlada ou redireciona.
+
+Para operações de Storage, o helper atual usa uma rota server-side privilegiada depois de validar o arquivo, autenticar o usuário e aplicar rate limit. A Secret Key não deve ser enviada ao navegador.
+
+### Responsabilidades separadas
+
+- **Middleware:** atualiza cookies e protege a navegação em rotas privadas.
+- **Server Action:** valida a operação, autentica o ator e aplica as verificações necessárias.
+- **RLS:** limita o acesso ao banco conforme as policies realmente aplicadas.
+- **Admin Client:** reservado para operações server-side que precisam de privilégio elevado; não é o cliente padrão para mutations de usuários.
 
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+### Limite atual da autorização
 
-# SOMENTE SERVER
-SUPABASE_SECRET_KEY=
+O arquivo src/lib/auth/authorization.ts exporta os helpers authorized(), forbidden() e notFound(), além dos tipos de resultado. Ele **não** implementa RBAC, permissões por recurso, membership, isolamento multi-tenant ou regras administrativas genéricas. Cada funcionalidade que vier a ser criada ainda precisará definir e validar sua autorização no servidor e no banco.
 
-# ==================================================
-# UPSTASH
-# ==================================================
+## 4. Funcionalidades e rotas existentes
 
-UPSTASH_REDIS_REST_URL=
-UPSTASH_REDIS_REST_TOKEN=
+| Rota | Acesso | Implementação |
+|---|---|---|
+| / | Público | Página inicial do template |
+| /login | Público | Login por e-mail e senha, Turnstile e redirect interno seguro |
+| /cadastro | Público | Cadastro com nome, sobrenome, e-mail, senha e confirmação |
+| /dashboard | Protegido | Exibe informações básicas do usuário e permite logout |
+| /esqueci-senha | Público | Solicita e-mail de recuperação com resposta genérica |
+| /auth/callback | Callback do Supabase | Troca o código de recovery por uma sessão |
+| /redefinir-senha | Sessão de recovery | Só permite redefinir senha com claims de recovery válidos |
+| /settings/security | Protegido | Tela de alteração de senha |
 
-# Segredo usado para gerar fingerprints HMAC
-RATE_LIMIT_HASH_SECRET=
+O middleware protege /dashboard, seus subcaminhos, /settings e seus subcaminhos. A página e a action também devem confirmar a identidade quando executam operações sensíveis; o middleware não substitui essa validação.
 
-# ==================================================
-# INFRAESTRUTURA
-# ==================================================
+### 4.1 Cadastro
 
-# Necessário fora da Vercel quando houver proxy confiável.
-# Exemplo Cloudflare:
-# TRUSTED_CLIENT_IP_HEADER=cf-connecting-ip
-TRUSTED_CLIENT_IP_HEADER=
+- Validação server-side com Zod.
+- Nome e sobrenome obrigatórios.
+- E-mail normalizado para minúsculas.
+- Senha com pelo menos 12 caracteres, incluindo maiúscula, minúscula, número e símbolo.
+- Confirmação de senha.
+- Turnstile.
+- Rate limit por IP e por combinação IP + e-mail.
+- Cadastro feito com o cliente Supabase SSR, sem usar o Admin Client.
+- Metadata enviada ao Supabase Auth contém nome, sobrenome e cadastro_tipo = cliente.
+- O Supabase pode exigir confirmação de e-mail, conforme a configuração do projeto.
 
-# ==================================================
-# TURNSTILE — PLANEJADO
-# ==================================================
+O trigger SQL antigo de cadastro está vinculado ao schema operon e espera tabelas específicas. Como o conjunto de migrations ainda será refeito, não considere a sincronização Auth → perfil interno como uma fundação genérica concluída.
 
-NEXT_PUBLIC_TURNSTILE_SITE_KEY=
+### 4.2 Login
 
-# O nome final do secret deve seguir a configuração
-# utilizada no projeto/Supabase.
-SUPABASE_AUTH_CAPTCHA_SECRET=
-```
+- Validação server-side com Zod.
+- E-mail normalizado.
+- Turnstile.
+- Rate limit por IP e por IP + e-mail.
+- Resposta genérica para credenciais inválidas, reduzindo enumeração de contas.
+- Redirect limitado a caminhos internos da aplicação.
+- Sessão gerenciada por cookies através do Supabase SSR.
 
----
+### 4.3 Logout
 
-# 🚨 Nunca exponha estas variáveis
+O logout usa Supabase Auth com scope local, encerrando a sessão atual. O logout global é usado depois da alteração ou redefinição de senha.
 
-Nunca use no client:
+### 4.4 Recuperação de senha
 
-```text
-SUPABASE_SECRET_KEY
-UPSTASH_REDIS_REST_TOKEN
-RATE_LIMIT_HASH_SECRET
-SUPABASE_AUTH_CAPTCHA_SECRET
-```
+O fluxo é dividido em três partes:
 
-Variáveis com:
+1. /esqueci-senha recebe e valida o e-mail e o token Turnstile.
+2. requestPasswordResetAction aplica rate limit por IP, IP + e-mail e e-mail; solicita o reset ao Supabase Auth e devolve uma mensagem genérica.
+3. /auth/callback troca o código por uma sessão e só aceita o destino interno /redefinir-senha.
 
-```text
-NEXT_PUBLIC_
-```
+A página /redefinir-senha e a action completePasswordResetAction exigem uma sessão autenticada originada do fluxo de recovery. A action consulta getUser() e getClaims(), confere o usuário e o método AMR recovery, altera a senha, registra auditoria e tenta revogar as sessões globalmente.
 
-podem ser enviadas para o navegador.
+### 4.5 Alteração de senha
 
-Portanto, nunca coloque uma chave privilegiada com esse prefixo.
+A tela /settings/security permite informar a senha atual e a nova senha. A action:
 
----
+- valida os campos com Zod;
+- exige usuário autenticado;
+- aplica o escopo sensitiveMutation;
+- envia a senha atual ao Supabase Auth;
+- trata senha atual incorreta, senha fraca, senha repetida e reautenticação necessária;
+- solicita código de reautenticação quando o Supabase exigir uma sessão recente;
+- registra os resultados no helper de auditoria;
+- tenta encerrar globalmente as sessões após a alteração.
 
-# 📦 Instalação
+A configuração local supabase/config.toml habilita secure_password_change. A configuração equivalente também precisa ser conferida no projeto Supabase hospedado. Alteração de e-mail não faz parte desta implementação.
 
-Clone:
+## 5. Rate limiting
 
-```bash
-git clone https://github.com/JTrallii/projeto-base.git
-cd projeto-base
-```
+Implementação em src/lib/security/rate-limit.ts, usando Upstash Redis e @upstash/ratelimit.
 
-Instale as dependências:
+Os identificadores de IP, e-mail e usuário são transformados com HMAC-SHA256 antes de serem utilizados como chave no Redis. O segredo usado para isso é RATE_LIMIT_HASH_SECRET.
 
-```bash
-npm install
-```
+| Escopo | Limite configurado | Uso atual |
+|---|---:|---|
+| loginIp | 20 por minuto | Login |
+| loginCredential | 5 por minuto | Login por IP + e-mail |
+| registerIp | 5 por hora | Cadastro |
+| registerCredential | 3 por hora | Cadastro por IP + e-mail |
+| mutation | Token bucket: 20 tokens por 10 segundos, capacidade 40 | Disponível para mutations futuras |
+| sensitiveMutation | 10 por minuto | Alteração e redefinição de senha |
+| upload | 10 por minuto | Helper de upload |
+| exportUser | 3 por hora | Configurado, sem fluxo de exportação implementado |
+| exportTenant | 10 por dia | Configurado, sem fluxo multi-tenant de exportação |
+| passwordReset | 3 por hora | Solicitação de recuperação |
+| invitation | 10 por hora | Configurado, sem fluxo de convites implementado |
 
-Execute:
+As actions que dependem explicitamente de rate limit falham de forma fechada quando o serviço não pode ser consultado: a operação não continua sem a proteção solicitada.
 
-```bash
-npm run dev
-```
+O helper createRateLimitHeaders() também gera os headers Cache-Control, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset e Retry-After quando bloqueado. Ainda não há Route Handler de negócio que exponha esse padrão.
 
-Abra:
+## 6. Identificação de IP e URL da aplicação
 
-```text
-http://localhost:3000
-```
+### IP confiável
 
----
+Arquivo: src/lib/security/client-ip.ts.
 
-# ⚠️ npm x pnpm
+- Desenvolvimento: retorna 127.0.0.1.
+- Vercel: utiliza x-vercel-forwarded-for.
+- Outras infraestruturas: exige TRUSTED_CLIENT_IP_HEADER configurado para um header que o proxy controlado sobrescreva.
 
-O repositório ainda contém arquivos de lock de mais de um gerenciador de pacotes.
+Não confie cegamente em x-forwarded-for quando o cliente puder fornecer esse header sem que o proxy o remova e substitua.
 
-Antes da versão final da base, escolha apenas um.
+### APP_URL
 
-Exemplo usando npm:
+Arquivo: src/lib/security/app-url.ts.
 
-```text
-package-lock.json ✅
-pnpm-lock.yaml ❌
-```
+APP_URL precisa ser uma origem válida, sem credenciais, caminho, query string ou fragmento. HTTPS é aceito; HTTP é permitido somente para localhost em desenvolvimento. O callback de recuperação usa essa origem para montar o redirect.
 
-Ou usando pnpm:
+## 7. Upload, imagens e Storage
 
-```text
-pnpm-lock.yaml ✅
-package-lock.json ❌
-```
+### 7.1 Validação de arquivos
 
-Não mantenha dois lockfiles como referência oficial do projeto.
+Arquivo: src/lib/security/file-upload.ts.
 
----
+Valores padrão:
 
-# 🟢 Supabase Clients
+- Tamanho máximo: 5 MiB.
+- MIME types aceitos: image/jpeg, image/png, image/webp e application/pdf.
+- SVG é rejeitado.
+- Extensão precisa corresponder ao MIME declarado.
+- Nome de arquivo é validado.
+- A assinatura inicial do conteúdo é conferida para JPEG, PNG, WebP e PDF.
 
-A base possui clientes diferentes porque **cada contexto possui permissões e responsabilidades diferentes**.
+O MIME informado pelo browser não é considerado prova suficiente do formato real.
 
----
+### 7.2 Normalização de imagens
 
-# 🌐 Browser Client
+Arquivo: src/lib/security/image-normalization.ts.
 
-Arquivo atual:
+JPEG, PNG e WebP são decodificados com Sharp e reconstruídos como um novo arquivo WebP. O processamento:
 
-```text
-src/lib/supabase/supabase.ts
-```
+- confere se o formato decodificado corresponde ao MIME informado;
+- rejeita imagens animadas ou multipágina;
+- limita largura e altura a 4096 pixels;
+- limita o total de pixels a 4096 × 4096;
+- aplica orientação EXIF;
+- converte para sRGB;
+- não preserva EXIF, XMP, IPTC ou outros metadados;
+- usa qualidade WebP padrão 82;
+- limita a saída normalizada a 5 MiB.
 
-Uso:
+PDF não passa pela conversão de imagem; permanece sujeito às validações de arquivo e assinatura.
 
-* código executado no navegador;
-* subscriptions;
-* realtime;
-* operações intencionalmente permitidas por RLS;
-* leitura de sessão quando necessário à interface.
+### 7.3 Helper de upload autenticado
 
-Exemplo:
+Arquivo: src/lib/security/authenticated-upload.ts.
 
-```ts
-import { createClient } from "@/lib/supabase/supabase";
+uploadAuthenticatedFile() executa:
 
-const supabase = createClient();
-```
+1. validação do arquivo;
+2. validação do nome do bucket;
+3. autenticação via requireAuthenticatedUser();
+4. rate limit no escopo upload;
+5. validação da assinatura do arquivo;
+6. normalização de imagens para WebP;
+7. geração server-side do caminho userId/UUID.ext;
+8. envio ao Supabase Storage com Admin Client e upsert desabilitado;
+9. tentativa de registrar sucesso ou falha na auditoria.
 
-## Regra
+**Limite atual:** o helper está implementado, mas a árvore atual não contém uma Server Action, Route Handler ou tela de upload que o invoque. Portanto, existe a camada reutilizável de processamento e persistência, mas não um fluxo de upload completo conectado à interface.
 
-O browser client **nunca deve receber secret/service key**.
+### 7.4 Bucket privado
 
-Ele deve depender das políticas RLS para impedir acesso indevido.
+A migration 20261009195450_create_private_user_files_storage.sql define o bucket private-user-files com:
 
----
+- bucket privado;
+- limite de 5 MiB;
+- MIME types image/webp e application/pdf;
+- caminho no formato user-id/UUID.ext;
+- policy de SELECT limitada à pasta do próprio auth.uid();
+- ausência de policies de INSERT, UPDATE e DELETE para authenticated.
 
-# 🖥️ Server Client
+A arquitetura pretendida é que escrita e exclusão passem pelo backend, não diretamente pelo browser. A migration precisa ser incorporada à reestruturação final do banco, aplicada no ambiente correto e testada antes de considerar o Storage operacional no Supabase remoto.
 
-Arquivo:
+O template reutilizável fica em supabase/templates/storage/private-user-files.sql. Antes de usá-lo, substitua BUCKET_NAME e configure o bucket correspondente.
 
-```text
-src/lib/supabase/server.ts
-```
+## 8. Auditoria
 
-Uso:
+Arquivo: src/lib/security/audit-log.ts.
 
-* Server Components;
-* Server Actions;
-* Route Handlers;
-* leitura segura do usuário;
-* consultas feitas em nome do usuário autenticado.
+recordAuditEvent() envia eventos para a função RPC public.write_audit_event usando o Admin Client. O helper:
 
-Exemplo:
+- aceita outcome success, failure ou denied;
+- registra ator, tipo e identificador do recurso;
+- sanitiza metadados;
+- mascara chaves que aparentam conter senha, token, secret, cookie, autorização ou CAPTCHA;
+- limita profundidade, quantidade de entradas e tamanho de strings;
+- não deve receber senhas, tokens, cookies ou segredos.
 
-```ts
-import { createServerSupabase } from "@/lib/supabase/server";
+A migration 20260826200522_create_audit_log.sql cria audit.events, habilita RLS, restringe acesso direto e define a função de escrita para service_role.
 
-const supabase = await createServerSupabase();
-```
+A auditoria é chamada em operações sensíveis de alteração/redefinição de senha e no helper de upload. Isso **não equivale a uma cobertura completa de auditoria da aplicação**: login, cadastro, logout e futuras mutations ainda precisam de uma política de eventos própria. A migration também precisa estar aplicada no banco para que a RPC exista no ambiente.
 
-Esse cliente utiliza os cookies da requisição.
+## 9. Middleware, CSP e headers
 
----
+### Middleware
 
-# 👑 Admin Client
+- src/middleware.ts delega para updateSession().
+- src/lib/supabase/middleware.ts atualiza cookies da sessão.
+- getClaims() é usado para validar os claims do access token.
+- /dashboard e /settings, incluindo subrotas, exigem JWT válido.
+- Usuários não autenticados são enviados para /login com o caminho de retorno.
+- O middleware não redireciona automaticamente /login para /dashboard apenas por encontrar um JWT; isso evita ciclos com access tokens antigos após logout global.
 
-Arquivo:
+A autenticação também deve ser verificada dentro de cada Server Action protegida.
 
-```text
-src/lib/supabase/admin.ts
-```
+### Headers
 
-Uso somente para operações administrativas confiáveis.
+A configuração fica em next.config.ts e inclui:
 
-Exemplo:
+- Content-Security-Policy;
+- X-Content-Type-Options: nosniff;
+- X-Frame-Options: DENY;
+- Referrer-Policy: strict-origin-when-cross-origin;
+- Permissions-Policy;
+- X-Permitted-Cross-Domain-Policies;
+- Strict-Transport-Security em ambiente diferente de desenvolvimento.
 
-```ts
-import { createAdminSupabase } from "@/lib/supabase/admin";
+A CSP restringe scripts, estilos, imagens, mídia, fontes, conexões, frames, workers e objetos. A política atual ainda permite unsafe-inline para scripts e estilos; unsafe-eval é acrescentado em desenvolvimento. A revisão para uma política baseada em nonce/hash permanece como melhoria de segurança.
 
-const supabaseAdmin = createAdminSupabase();
-```
+O limite de body das Server Actions está configurado em 6 MB.
 
-## ⚠️ Regra crítica
+## 10. Supabase: clientes e configuração
 
-O admin client pode ignorar as proteções normais de RLS dependendo da chave utilizada.
+### Browser Client
 
-Portanto:
+Arquivo: src/lib/supabase/supabase.ts.
 
-```text
-USUÁRIO → ACTION → supabaseAdmin
-```
+Cria o cliente de navegador com createBrowserClient(), NEXT_PUBLIC_SUPABASE_URL e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY. Nunca deve receber SUPABASE_SECRET_KEY.
 
-não deve ser o padrão.
+### Server Client
 
-Para operações realizadas pelo usuário:
+Arquivo: src/lib/supabase/server.ts.
 
-```text
-USUÁRIO
-   ↓
-SERVER ACTION
-   ↓
-AUTENTICAÇÃO
-   ↓
-AUTORIZAÇÃO
-   ↓
-SERVER SUPABASE
-   ↓
-RLS
-```
+Cria o cliente SSR com cookies da requisição. É utilizado em Server Components, Server Actions e operações executadas em nome do usuário autenticado.
 
-O admin client deve ser reservado para casos como:
+### Admin Client
 
-* tarefas administrativas internas;
-* manutenção;
-* criação administrativa de usuários;
-* processos server-to-server;
-* operações que realmente precisam de privilégio elevado.
+Arquivo: src/lib/supabase/admin.ts.
 
----
+Cria um cliente server-only com SUPABASE_SECRET_KEY. É utilizado pelo helper de auditoria e pelo helper de upload. Essa chave nunca deve ser prefixada com NEXT_PUBLIC_ ou importada por Client Components.
 
-# 👤 Usuário atual
+### Configuração local
 
-Helper:
+Arquivo: supabase/config.toml.
 
-```text
-src/lib/auth/get-current-user.ts
-```
+A configuração versionada inclui, entre outros pontos:
 
-Uso:
+- Supabase local com PostgreSQL major version 17;
+- Auth habilitado;
+- cadastro por e-mail habilitado;
+- confirmação de e-mail habilitada;
+- senha mínima de 12 caracteres;
+- requisitos de senha com letras maiúsculas, minúsculas, números e símbolos;
+- secure_password_change habilitado;
+- rotação de refresh token;
+- MFA TOTP e phone desabilitados;
+- Storage local com limite global de 50 MiB;
+- URL local e callback de recovery para localhost.
 
-```ts
-import { getCurrentUser } from "@/lib/auth/get-current-user";
+A seção de CAPTCHA do Supabase Auth está comentada no config.toml. Para usar Turnstile localmente, configure explicitamente o provider e o secret conforme a documentação do Supabase. No projeto hospedado, confira também a configuração de CAPTCHA, URLs de redirect e a exigência de senha atual para alteração de senha.
 
-const user = await getCurrentUser();
+## 11. Variáveis de ambiente
 
-if (!user) {
-  // não autenticado
-}
-```
+Copie .env.example para .env.local e preencha os valores do ambiente. Não reutilize secrets entre desenvolvimento, staging e produção.
 
-Esse código deve permanecer server-only.
+| Variável | Obrigatória / uso |
+|---|---|
+| APP_URL | Origem pública da aplicação; HTTPS em produção e localhost em desenvolvimento |
+| NEXT_PUBLIC_SUPABASE_URL | URL do projeto Supabase |
+| NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY | Chave pública do Supabase; pode chegar ao browser |
+| SUPABASE_SECRET_KEY | Chave privilegiada; somente servidor, necessária para Admin Client |
+| UPSTASH_REDIS_REST_URL | URL REST do Redis Upstash |
+| UPSTASH_REDIS_REST_TOKEN | Token REST Upstash; somente servidor |
+| RATE_LIMIT_HASH_SECRET | Segredo aleatório forte para HMAC; somente servidor |
+| TRUSTED_CLIENT_IP_HEADER | Header confiável do proxy; necessário fora de Vercel e fora do desenvolvimento local |
+| NEXT_PUBLIC_TURNSTILE_SITE_KEY | Site Key do widget Turnstile |
+| SUPABASE_AUTH_CAPTCHA_SECRET | Secret usado pelo Supabase Auth para validar CAPTCHA; somente servidor |
 
----
+Variáveis opcionais documentadas no exemplo:
 
-# 🔐 Middleware
+- OPENAI_API_KEY: recursos de IA do Supabase Studio local.
+- SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN: integração SMS/Twilio futura.
+- S3_HOST, S3_REGION, S3_ACCESS_KEY e S3_SECRET_KEY: recursos S3 experimentais do Supabase.
 
-O middleware principal está em:
+Nunca faça commit de .env, .env.local, chaves privadas, tokens ou credenciais. Variáveis com prefixo NEXT_PUBLIC_ são expostas ao navegador.
 
-```text
-src/middleware.ts
-```
+## 12. Instalação e comandos
 
-Ele delega o processamento para:
+1. Clone o repositório.
+2. Instale as dependências com npm install.
+3. Crie .env.local a partir de .env.example e configure as credenciais.
+4. Configure Supabase Auth, Upstash e Turnstile.
+5. Inicie a aplicação com npm run dev.
+6. Acesse http://localhost:3000.
 
-```text
-src/lib/supabase/middleware.ts
-```
+Scripts disponíveis em package.json:
 
-Responsabilidades atuais:
+| Comando | Finalidade |
+|---|---|
+| npm run dev | Desenvolvimento |
+| npm run build | Build de produção |
+| npm run start | Servir o build de produção |
+| npm run lint | Executar o lint configurado |
 
-* atualizar cookies da sessão;
-* validar claims do usuário;
-* proteger `/dashboard`;
-* redirecionar usuários não autenticados para `/login`;
-* redirecionar usuários autenticados que tentem acessar `/login` ou `/cadastro`.
+Não existe atualmente script npm de testes ou de typecheck. Não há suíte automatizada nem workflow de CI no repositório. Antes de um deploy, execute ao menos o lint e o build no ambiente de desenvolvimento e valide manualmente os fluxos externos.
 
-Fluxo:
+### Gerenciador de pacotes
 
-```text
-REQUEST
-   ↓
-src/middleware.ts
-   ↓
-updateSession()
-   ↓
-Supabase getClaims()
-   ↓
-autenticado?
-   │
-   ├─ NÃO + /dashboard → /login
-   │
-   └─ SIM + /login → /dashboard
-```
+O repositório mantém package-lock.json e pnpm-lock.yaml, além de pnpm-workspace.yaml. Use npm conforme os comandos acima enquanto essa padronização não for concluída; a remoção do lockfile não utilizado deve ser feita em uma etapa própria.
 
-## Importante
+## 13. Banco de dados e migrations
 
-Middleware responde:
+As migrations estão em supabase/migrations/. O estado atual é legado e ainda não representa um baseline genérico pronto para ser aplicado em qualquer projeto.
 
-> "O usuário pode navegar até esta página?"
+Arquivos presentes:
 
-Server Action responde:
+| Migration | Responsabilidade / estado |
+|---|---|
+| 20260703153258_create_table.sql | Template antigo de schema, usuarios e clientes; contém placeholder de schema |
+| 20260703153317_ativar_RLS.sql | Template antigo de RLS; contém placeholder e referencia tabelas que não são criadas de forma consistente pelo conjunto |
+| 20260703153335_ativar_GRANT.sql | Grants antigos com placeholder de schema |
+| 20260703155113_config_policy.sql | Policies de exemplo antigas com placeholders e referências de domínio |
+| 20260730202845_create_client_registration_trigger.sql | Trigger legado no schema operon; pressupõe tabelas específicas |
+| 20260730203023_create_client_registration_trigger_permition.sql | Recria o trigger legado e suas permissões |
+| 20260826200522_create_audit_log.sql | Estrutura audit.events e RPC public.write_audit_event |
+| 20261009195221_create_keep_alive_function.sql | Cria public.keep_alive() |
+| 20261009195450_create_private_user_files_storage.sql | Define bucket privado e policy de leitura por pasta de usuário |
 
-> "O usuário pode executar esta operação?"
+### Decisão para a etapa de banco
 
-São responsabilidades diferentes.
+O banco, as migrations antigas e as novas migrations de auditoria, keep-alive e Storage serão revisados e reorganizados juntos em uma etapa posterior. Até essa revisão:
 
----
+- não trate os arquivos SQL como prova de que o banco remoto já está atualizado;
+- não considere os placeholders antigos como migrations prontas;
+- não execute supabase db push indiscriminadamente;
+- não aplique a cadeia antiga em produção;
+- valide a reconstrução do banco do zero e as policies em ambiente isolado antes de promover alterações.
 
-# 🔑 Autenticação
+A migration de keep-alive cria apenas uma função SQL que retorna true. Ela **não mantém o projeto ativo por conta própria**. É necessário um agendador externo autorizado para invocá-la periodicamente; esse agendamento ainda não está configurado.
 
-As Server Actions oficiais estão em:
+## 14. Mapa de pastas e arquivos
 
-```text
-src/actions/auth.ts
-```
+A estrutura abaixo corresponde aos arquivos versionados na branch documentada. Os caminhos são relativos à raiz do repositório.
 
-Existem atualmente:
+### 14.1 Arquivos da raiz
 
-```ts
-loginAction()
-registerAction()
-logoutAction()
-```
+| Caminho | Responsabilidade |
+|---|---|
+| .env.example | Modelo das variáveis de ambiente, sem credenciais reais |
+| .gitattributes | Regras de normalização de arquivos no Git |
+| .gitignore | Ignora dependências, build, arquivos locais e variáveis de ambiente |
+| AI_RULES.md | Orientações do projeto para ferramentas e assistentes de IA |
+| LICENSE | Licença Apache 2.0 |
+| README.md | Documentação principal do projeto |
+| components.json | Configuração de aliases e estilo dos componentes shadcn/ui |
+| next-env.d.ts | Referências de tipos geradas pelo Next.js |
+| next.config.ts | Configuração do Next.js, CSP, headers e limite de Server Actions |
+| package.json | Dependências e scripts npm |
+| package-lock.json | Lockfile do npm |
+| pnpm-lock.yaml | Lockfile do pnpm; coexistência com npm ainda precisa ser resolvida |
+| pnpm-workspace.yaml | Configuração de workspace do pnpm |
+| postcss.config.mjs | Configuração do PostCSS/Tailwind |
+| tailwind.config.ts | Tema, conteúdo e extensões do Tailwind CSS |
+| tsconfig.json | Configuração TypeScript, strict mode e alias @/* |
 
----
+### 14.2 Ações de servidor — src/actions/
 
-# 🔓 Login
+| Caminho | Responsabilidade |
+|---|---|
+| src/actions/auth.ts | Server Actions de login, cadastro e logout; schemas Zod e redirect interno seguro |
+| src/actions/password-change.ts | Solicitação de reautenticação e alteração de senha |
+| src/actions/password-reset.ts | Solicitação e conclusão da recuperação de senha |
 
-Fluxo atual:
+Não existe atualmente uma action de upload em src/actions/.
 
-```text
-FORM
- ↓
-AuthContext.login()
- ↓
-loginAction()
- ↓
-Zod
- ↓
-IP confiável
- ↓
-Rate limit por IP
- ↓
-Rate limit IP + e-mail
- ↓
-Supabase signInWithPassword()
- ↓
-cookies SSR
- ↓
-redirect seguro
-```
+### 14.3 Rotas e páginas — src/app/
 
-O login possui dois rate limits:
+| Caminho | Responsabilidade |
+|---|---|
+| src/app/page.tsx | Página inicial pública do template |
+| src/app/layout.tsx | Root Layout; carrega usuário no servidor e fornece AuthProvider |
+| src/app/globals.css | Estilos globais, variáveis de tema e utilitários |
+| src/app/favicon.ico | Favicon da aplicação |
+| src/app/login/page.tsx | Formulário de login |
+| src/app/cadastro/page.tsx | Formulário de cadastro |
+| src/app/dashboard/page.tsx | Dashboard básico do usuário autenticado |
+| src/app/esqueci-senha/page.tsx | Formulário para solicitar recuperação de senha |
+| src/app/auth/callback/route.ts | Route Handler GET para troca do código de recovery por sessão |
+| src/app/redefinir-senha/page.tsx | Valida a sessão de recovery e apresenta o formulário |
+| src/app/redefinir-senha/ResetPasswordForm.tsx | Formulário client-side de redefinição de senha |
+| src/app/settings/security/page.tsx | Página protegida de segurança da conta |
+| src/app/settings/security/PasswordChangeForm.tsx | Formulário de alteração de senha e código de reautenticação |
 
-```text
-loginIp
-loginCredential
-```
+Não existe diretório src/app/api/ nesta versão. O callback em auth/callback é o único Route Handler listado na árvore atual.
 
-Isso ajuda a limitar:
+### 14.4 Componentes de segurança — src/components/security/
 
-* muitas contas sendo testadas pelo mesmo IP;
-* muitas tentativas contra uma determinada credencial.
+| Caminho | Responsabilidade |
+|---|---|
+| src/components/security/TurnstileWidget.tsx | Integra o widget Cloudflare Turnstile no browser e entrega o token ao formulário |
 
----
+### 14.5 Componentes de interface — src/components/ui/
 
-# 📝 Cadastro
+| Caminho | Responsabilidade |
+|---|---|
+| src/components/ui/Footer.tsx | Rodapé global |
+| src/components/ui/Header.tsx | Cabeçalho, navegação e ações da sessão |
+| src/components/ui/Layout.tsx | Layout visual que combina Header, conteúdo e Footer |
+| src/components/ui/Modal.tsx | Modal reutilizável |
+| src/components/ui/accordion.tsx | Conteúdo expansível em acordeão |
+| src/components/ui/alert-dialog.tsx | Diálogo de confirmação/alerta |
+| src/components/ui/alert.tsx | Mensagens de alerta |
+| src/components/ui/aspect-ratio.tsx | Controle de proporção de conteúdo |
+| src/components/ui/avatar.tsx | Avatar |
+| src/components/ui/badge.tsx | Badge/etiqueta |
+| src/components/ui/breadcrumb.tsx | Navegação hierárquica |
+| src/components/ui/button.tsx | Botões e variantes |
+| src/components/ui/calendar.tsx | Calendário |
+| src/components/ui/card.tsx | Cards e regiões de conteúdo |
+| src/components/ui/carousel.tsx | Carrossel |
+| src/components/ui/chart.tsx | Componentes de gráficos |
+| src/components/ui/checkbox.tsx | Checkbox |
+| src/components/ui/collapsible.tsx | Conteúdo recolhível |
+| src/components/ui/command.tsx | Interface de comandos e busca |
+| src/components/ui/context-menu.tsx | Menu de contexto |
+| src/components/ui/dialog.tsx | Diálogo modal |
+| src/components/ui/drawer.tsx | Painel deslizante |
+| src/components/ui/dropdown-menu.tsx | Menu suspenso |
+| src/components/ui/form.tsx | Componentes auxiliares de formulário |
+| src/components/ui/hover-card.tsx | Card exibido ao passar o cursor |
+| src/components/ui/input-otp.tsx | Entrada de código OTP |
+| src/components/ui/input.tsx | Campo de entrada |
+| src/components/ui/label.tsx | Label de formulário |
+| src/components/ui/menubar.tsx | Barra de menus |
+| src/components/ui/navigation-menu.tsx | Menu de navegação |
+| src/components/ui/pagination.tsx | Paginação |
+| src/components/ui/popover.tsx | Popover |
+| src/components/ui/progress.tsx | Indicador de progresso |
+| src/components/ui/radio-group.tsx | Grupo de opções exclusivas |
+| src/components/ui/resizable.tsx | Painéis redimensionáveis |
+| src/components/ui/scroll-area.tsx | Área de rolagem |
+| src/components/ui/select.tsx | Campo de seleção |
+| src/components/ui/separator.tsx | Separador visual |
+| src/components/ui/sheet.tsx | Painel lateral/modal |
+| src/components/ui/sidebar.tsx | Barra lateral |
+| src/components/ui/skeleton.tsx | Placeholder de carregamento |
+| src/components/ui/sonner.tsx | Integração de notificações toast |
+| src/components/ui/switch.tsx | Controle liga/desliga |
+| src/components/ui/table.tsx | Elementos de tabela |
+| src/components/ui/tabs.tsx | Abas |
+| src/components/ui/textarea.tsx | Campo de texto multilinha |
+| src/components/ui/toggle-group.tsx | Grupo de toggles |
+| src/components/ui/toggle.tsx | Toggle individual |
+| src/components/ui/tooltip.tsx | Tooltip |
 
-Fluxo:
+Os componentes de src/components/ui/ são primitivas reutilizáveis de interface. Sua presença não significa que todos já estejam utilizados em páginas do produto.
 
-```text
-FORM
- ↓
-AuthContext.register()
- ↓
-registerAction()
- ↓
-Zod
- ↓
-Rate limit IP
- ↓
-Rate limit IP + e-mail
- ↓
-Supabase signUp()
- ↓
-Auth metadata
- ↓
-trigger do banco [AINDA PRECISA SER IMPLEMENTADO NA MIGRATION]
- ↓
-perfil interno
-```
+### 14.6 Contextos e hooks
+
+| Caminho | Responsabilidade |
+|---|---|
+| src/contexts/AuthContext.tsx | Estado de autenticação para a interface e chamadas às Server Actions |
+| src/hooks/use-mobile.tsx | Hook para detectar viewport mobile |
+| src/hooks/useModal.ts | Hook para abrir, fechar e alternar modal |
 
-O cadastro atual envia:
+O AuthContext é uma camada de estado visual. Não é a fronteira de segurança do backend.
 
-```ts
-cadastro_tipo: "cliente"
-```
+### 14.7 Autenticação — src/lib/auth/
 
-O usuário **não escolhe sua própria role**.
+| Caminho | Responsabilidade |
+|---|---|
+| src/lib/auth/authorization.ts | Tipos e helpers de resultado: authorized, forbidden e notFound |
+| src/lib/auth/get-current-user.ts | Obtém e mapeia o usuário atual com Supabase Auth; server-only |
+| src/lib/auth/recovery-session.ts | Confirma se os claims pertencem a uma sessão de recovery |
+| src/lib/auth/require-authenticated-user.ts | Confirma usuário com getUser() e aplica rate limit opcional para Server Actions |
 
-Isso é proposital.
+### 14.8 Segurança — src/lib/security/
 
-## ⚠️ Pendência importante
+| Caminho | Responsabilidade |
+|---|---|
+| src/lib/security/app-url.ts | Valida APP_URL e retorna origem confiável |
+| src/lib/security/audit-log.ts | Sanitiza metadados e grava eventos via RPC de auditoria |
+| src/lib/security/authenticated-upload.ts | Valida, normaliza e envia arquivo ao Storage no servidor |
+| src/lib/security/client-ip.ts | Obtém IP de uma origem confiável |
+| src/lib/security/file-upload.ts | Valida tamanho, MIME, extensão, nome e assinatura de arquivo |
+| src/lib/security/image-normalization.ts | Decodifica e converte imagens para WebP com Sharp |
+| src/lib/security/rate-limit.ts | Configura Upstash, HMAC, escopos e headers de rate limit |
 
-A action já pressupõe que um trigger do banco utilizará essas informações.
+### 14.9 Integração Supabase — src/lib/supabase/
 
-Porém a migration final contendo esse trigger ainda precisa ser criada.
+| Caminho | Responsabilidade |
+|---|---|
+| src/lib/supabase/admin.ts | Cria Admin Client server-only com Secret Key |
+| src/lib/supabase/middleware.ts | Atualiza sessão/cookies e protege rotas privadas |
+| src/lib/supabase/server.ts | Cria cliente Supabase SSR para o servidor |
+| src/lib/supabase/supabase.ts | Cria cliente Supabase para o browser |
+| src/lib/supabase/utils.ts | Utilitário cn() para combinar classes CSS |
 
-Sem ele, não considere o fluxo Auth → perfil interno concluído.
+### 14.10 Outros arquivos de src/
 
----
+| Caminho | Responsabilidade |
+|---|---|
+| src/middleware.ts | Middleware principal do Next.js; delega para updateSession() |
+| src/types/index.ts | Tipos TypeScript de User, AuthState e formulários de autenticação |
 
-# 🚪 Logout
+### 14.11 Supabase — supabase/
 
-```text
-CLIENT
- ↓
-AuthContext.logout()
- ↓
-logoutAction()
- ↓
-Supabase signOut({ scope: "local" })
- ↓
-/login
-```
+| Caminho | Responsabilidade |
+|---|---|
+| supabase/.gitignore | Ignora artefatos locais do Supabase CLI |
+| supabase/config.toml | Configuração do ambiente Supabase local |
+| supabase/templates/storage/private-user-files.sql | Template de policy de leitura para bucket privado; requer substituir BUCKET_NAME |
 
-O escopo `local` encerra somente a sessão atual.
+Migrations presentes:
 
----
+- supabase/migrations/20260703153258_create_table.sql
+- supabase/migrations/20260703153317_ativar_RLS.sql
+- supabase/migrations/20260703153335_ativar_GRANT.sql
+- supabase/migrations/20260703155113_config_policy.sql
+- supabase/migrations/20260730202845_create_client_registration_trigger.sql
+- supabase/migrations/20260730203023_create_client_registration_trigger_permition.sql
+- supabase/migrations/20260826200522_create_audit_log.sql
+- supabase/migrations/20261009195221_create_keep_alive_function.sql
+- supabase/migrations/20261009195450_create_private_user_files_storage.sql
 
-# 🧩 AuthContext
+## 15. Limitações e próximos trabalhos
 
-Arquivo:
+Os itens abaixo não devem ser tratados como funcionalidades prontas:
 
-```text
-src/contexts/AuthContext.tsx
-```
+1. **Reorganização do banco:** revisar e rebaselinear migrations antigas e novas em conjunto; definir schema genérico, tabelas, grants, RLS, policies e triggers.
+2. **Auth → perfil:** substituir o trigger legado dependente de operon por um fluxo coerente com o modelo genérico escolhido.
+3. **Autorização:** implementar regras reais por role, recurso e tenant quando o modelo de domínio estiver definido.
+4. **Storage:** aplicar a migration no Supabase correto, testar acesso entre usuários e criar a action/rota que conecta o helper à interface.
+5. **Keep-alive:** definir e configurar um agendador externo, se esse recurso for realmente necessário.
+6. **Auditoria:** aplicar a migration, validar a RPC e ampliar a cobertura de eventos sem registrar dados secretos.
+7. **Turnstile:** configurar o provider e as chaves em cada ambiente, inclusive no Supabase Auth hospedado.
+8. **CSP:** avaliar nonce/hash para reduzir dependência de unsafe-inline.
+9. **Testes e CI:** adicionar testes de auth, autorização, RLS, rate limit, upload e pipeline de validação.
+10. **Tipos de banco:** gerar e versionar tipos do Supabase depois da definição do schema.
+11. **Dependências:** executar npm audit no estado atual e revisar os avisos sem aplicar atualizações major automaticamente.
+12. **Operação:** documentar staging, deploy, backup, monitoramento e rollback.
 
-O `AuthContext` pode continuar existindo para:
+Não existe implementação genérica de convites, exportação, gerenciamento de organizações, CRUD de domínio, MFA, alteração de e-mail ou administração de usuários nesta versão.
 
-* estado visual;
-* `isLoading`;
-* usuário atual na interface;
-* abstração das chamadas de login;
-* cadastro;
-* logout.
+## 16. Princípio para novas funcionalidades
 
-Ele **não deve conter a lógica de segurança principal**.
+Ao adicionar uma funcionalidade:
 
-Correto:
+1. Defina o modelo de dados e as permissões no banco.
+2. Crie schema Zod para a entrada.
+3. Crie Server Action em src/actions/.
+4. Confirme a identidade no servidor.
+5. Implemente a autorização específica da operação.
+6. Aplique rate limit conforme o risco.
+7. Use o Server Client quando a operação deve permanecer sujeita à RLS.
+8. Use Admin Client somente quando houver justificativa de privilégio elevado.
+9. Registre eventos sensíveis com metadados sanitizados.
+10. Conecte a interface somente depois de a regra server-side existir.
+11. Teste acesso autorizado e tentativas de acesso indevido.
 
-```text
-AuthContext
- ↓
-Server Action
- ↓
-segurança real
-```
+A interface não concede permissão. O middleware não substitui autenticação dentro da action. A autenticação não substitui autorização. RLS e grants precisam ser revisados em conjunto.
 
-Incorreto:
+## 17. Licença
 
-```text
-AuthContext
- ↓
-Supabase privilegiado diretamente
-```
-
----
-
-# 🔀 Redirect seguro
-
-O login possui uma função interna que aceita somente redirects relativos da própria aplicação.
-
-Exemplo aceito:
-
-```text
-/dashboard/configuracoes
-```
-
-Exemplo rejeitado:
-
-```text
-https://site-malicioso.com
-```
-
-Isso reduz risco de open redirect.
-
----
-
-# 🚦 Rate limiting
-
-Implementação:
-
-```text
-src/lib/security/rate-limit.ts
-```
-
-Backend:
-
-```text
-Upstash Redis
-```
-
-Os identificadores não são enviados diretamente como chave para o Redis.
-
-Antes são transformados com:
-
-```text
-HMAC-SHA256
-```
-
-utilizando:
-
-```env
-RATE_LIMIT_HASH_SECRET
-```
-
----
-
-# Escopos disponíveis
-
-| Scope                | Uso                               |
-| -------------------- | --------------------------------- |
-| `loginIp`            | Tentativas gerais de login por IP |
-| `loginCredential`    | Login por IP + e-mail             |
-| `registerIp`         | Cadastros por IP                  |
-| `registerCredential` | Cadastro por IP + e-mail          |
-| `mutation`           | Alterações autenticadas comuns    |
-| `sensitiveMutation`  | Operações críticas/destrutivas    |
-| `upload`             | Upload de arquivos                |
-| `exportUser`         | Limite individual de exportação   |
-| `exportTenant`       | Limite por tenant                 |
-| `passwordReset`      | Recuperação de senha              |
-| `invitation`         | Convites                          |
-
-Alguns desses escopos já existem na infraestrutura, mas ainda não possuem uma funcionalidade correspondente implementada na aplicação.
-
----
-
-# 🧠 Como escolher o rate limit
-
-## Mutation normal
-
-Exemplos:
-
-```text
-editar nome
-criar tarefa
-editar endereço
-alterar descrição
-```
-
-Use:
-
-```ts
-mutation
-```
-
----
-
-## Mutation sensível
-
-Exemplos:
-
-```text
-excluir conta
-alterar e-mail
-alterar role
-remover membro
-alterar permissões
-trocar configurações críticas
-```
-
-Use:
-
-```ts
-sensitiveMutation
-```
-
----
-
-## Upload
-
-Use:
-
-```ts
-upload
-```
-
----
-
-## Exportação
-
-Aplique:
-
-```text
-exportUser
-```
-
-e, em ambientes multi-tenant:
-
-```text
-exportTenant
-```
-
----
-
-# 🌍 Identificação de IP
-
-Arquivo:
-
-```text
-src/lib/security/client-ip.ts
-```
-
-## Desenvolvimento
-
-Retorna:
-
-```text
-127.0.0.1
-```
-
-## Vercel
-
-Utiliza header fornecido pela infraestrutura da Vercel.
-
-## Infraestrutura própria
-
-Configure:
-
-```env
-TRUSTED_CLIENT_IP_HEADER=cf-connecting-ip
-```
-
-por exemplo.
-
-## ⚠️ Atenção
-
-Não confie cegamente em:
-
-```text
-x-forwarded-for
-```
-
-se qualquer cliente puder enviar esse header diretamente.
-
-O proxy deve remover/substituir valores externos antes que ele seja considerado confiável.
-
----
-
-# 🧬 Padrão obrigatório para novas Server Actions
-
-Novas ações não devem ser criadas sem um padrão.
-
-Exemplo:
-
-```text
-src/actions/profile.ts
-src/actions/projects.ts
-src/actions/members.ts
-```
-
-Evite espalhar regras sensíveis dentro de componentes.
-
----
-
-# ✅ Exemplo — mutation autenticada
-
-```ts
-"use server";
-
-import { z } from "zod";
-import { revalidatePath } from "next/cache";
-
-import { getCurrentUser } from "@/lib/auth/get-current-user";
-import { createServerSupabase } from "@/lib/supabase/server";
-import { consumeRateLimit } from "@/lib/security/rate-limit";
-
-const schema = z.object({
-  name: z.string().trim().min(1).max(100),
-});
-
-export async function updateProfileAction(input: unknown) {
-  // 1. INPUT
-  const parsed = schema.safeParse(input);
-
-  if (!parsed.success) {
-    return {
-      ok: false,
-      code: "INVALID_INPUT",
-    };
-  }
-
-  // 2. AUTENTICAÇÃO
-  const user = await getCurrentUser();
-
-  if (!user) {
-    return {
-      ok: false,
-      code: "UNAUTHENTICATED",
-    };
-  }
-
-  // 3. RATE LIMIT
-  const rateLimit = await consumeRateLimit(
-    "mutation",
-    `user:${user.id}`,
-  );
-
-  if (!rateLimit.allowed) {
-    return {
-      ok: false,
-      code: "RATE_LIMITED",
-      retryAfterSeconds:
-        rateLimit.retryAfterSeconds,
-    };
-  }
-
-  // 4. CLIENTE SERVER — continua sujeito à RLS
-  const supabase =
-    await createServerSupabase();
-
-  // 5. EXECUÇÃO
-  const { error } = await supabase
-    .from("profiles")
-    .update({
-      name: parsed.data.name,
-    })
-    .eq("id", user.id);
-
-  if (error) {
-    console.error(
-      "Falha ao atualizar perfil",
-      {
-        event: "profile.update.failed",
-        userId: user.id,
-        databaseCode: error.code,
-      },
-    );
-
-    return {
-      ok: false,
-      code: "UPDATE_FAILED",
-    };
-  }
-
-  // 6. AUDITORIA
-  // TODO: registrar audit log.
-
-  // 7. CACHE
-  revalidatePath("/dashboard/profile");
-
-  return {
-    ok: true,
-  };
-}
-```
-
----
-
-# 🛑 Exemplo — action com autorização
-
-Autenticação responde:
-
-> Quem é você?
-
-Autorização responde:
-
-> Você pode executar isso?
-
-Exemplo:
-
-```ts
-"use server";
-
-import { z } from "zod";
-
-import { getCurrentUser } from "@/lib/auth/get-current-user";
-import { createServerSupabase } from "@/lib/supabase/server";
-import { consumeRateLimit } from "@/lib/security/rate-limit";
-
-const schema = z.object({
-  projectId: z.string().uuid(),
-});
-
-export async function deleteProjectAction(
-  input: unknown,
-) {
-  const parsed = schema.safeParse(input);
-
-  if (!parsed.success) {
-    return {
-      ok: false,
-      code: "INVALID_INPUT",
-    };
-  }
-
-  const user = await getCurrentUser();
-
-  if (!user) {
-    return {
-      ok: false,
-      code: "UNAUTHENTICATED",
-    };
-  }
-
-  const supabase =
-    await createServerSupabase();
-
-  // AUTORIZAÇÃO EXPLÍCITA
-  const { data: project } =
-    await supabase
-      .from("projects")
-      .select("id, owner_id")
-      .eq("id", parsed.data.projectId)
-      .maybeSingle();
-
-  if (
-    !project ||
-    project.owner_id !== user.id
-  ) {
-    return {
-      ok: false,
-      code: "FORBIDDEN",
-    };
-  }
-
-  const rateLimit =
-    await consumeRateLimit(
-      "sensitiveMutation",
-      `user:${user.id}`,
-    );
-
-  if (!rateLimit.allowed) {
-    return {
-      ok: false,
-      code: "RATE_LIMITED",
-    };
-  }
-
-  const { error } =
-    await supabase
-      .from("projects")
-      .delete()
-      .eq(
-        "id",
-        parsed.data.projectId,
-      );
-
-  if (error) {
-    return {
-      ok: false,
-      code: "DELETE_FAILED",
-    };
-  }
-
-  // TODO AUDIT LOG
-
-  return {
-    ok: true,
-  };
-}
-```
-
-Mesmo existindo RLS, mantenha autorização explícita quando a regra de negócio exigir.
-
-Use as duas camadas:
-
-```text
-ACTION AUTHORIZATION
-+
-DATABASE RLS
-```
-
----
-
-# 🏢 Padrão multi-tenant
-
-Para aplicações com organizações:
-
-```text
-User
- │
- ▼
-organization_members
- │
- ├── organization_id
- ├── user_id
- └── role
-```
-
-Antes de qualquer operação:
-
-```text
-1. autenticar
-2. obter organizationId
-3. verificar membership
-4. verificar role
-5. executar consulta
-6. deixar RLS validar novamente
-```
-
-Nunca confie apenas em:
-
-```ts
-organizationId
-```
-
-recebido do client.
-
----
-
-# 👑 Action administrativa
-
-Uma operação administrativa deve seguir:
-
-```text
-INPUT
- ↓
-AUTH
- ↓
-ROLE / PERMISSION
- ↓
-RATE LIMIT
- ↓
-AUDIT
- ↓
-ADMIN CLIENT
-```
-
-Exemplo conceitual:
-
-```ts
-const user = await requireUser();
-
-await requirePermission(
-  user.id,
-  "users.manage",
-);
-
-await consumeRateLimit(
-  "sensitiveMutation",
-  `user:${user.id}`,
-);
-
-const admin =
-  createAdminSupabase();
-
-// operação privilegiada
-```
-
-**Nunca crie uma action administrativa que apenas chama `supabaseAdmin` sem validar quem chamou.**
-
----
-
-# 🧱 Helpers que ainda serão criados
-
-Para evitar repetir autenticação em todas as actions, serão criados helpers centrais.
-
-Exemplo planejado:
-
-```text
-src/lib/auth/require-user.ts
-src/lib/auth/require-role.ts
-src/lib/auth/require-permission.ts
-```
-
-Uso desejado:
-
-```ts
-const user = await requireUser();
-```
-
-e:
-
-```ts
-await requirePermission(
-  user.id,
-  "project.delete",
-);
-```
-
-Isso não elimina a verificação.
-
-Apenas centraliza sua implementação.
-
----
-
-# ❌ Padrão proibido
-
-Não faça:
-
-```ts
-export async function deleteUser(
-  userId: string,
-) {
-  const admin =
-    createAdminSupabase();
-
-  await admin
-    .from("users")
-    .delete()
-    .eq("id", userId);
-}
-```
-
-Qualquer cliente capaz de invocar essa action poderia tentar enviar outro `userId`.
-
----
-
-# ✅ Padrão correto
-
-```text
-CLIENT
- ↓
-Server Action
- ↓
-Zod
- ↓
-getCurrentUser()
- ↓
-requirePermission()
- ↓
-rate limit
- ↓
-operação
- ↓
-audit
-```
-
----
-
-# 🗃️ Migrations
-
-As migrations ficam em:
-
-```text
-supabase/migrations/
-```
-
-Nunca trate o SQL Editor como fonte final da estrutura do banco.
-
-Mudanças permanentes devem ser versionadas.
-
----
-
-# Fluxo recomendado
-
-```bash
-supabase migration new create_profiles
-```
-
-Edite o SQL criado.
-
-Depois:
-
-```bash
-supabase db push
-```
-
-Quando estiver utilizando banco local:
-
-```bash
-supabase db reset
-```
-
-para testar se todas as migrations conseguem reconstruir o banco do zero.
-
----
-
-# ⚠️ Estado atual das migrations
-
-As migrations existentes ainda funcionam como **templates**.
-
-Elas possuem placeholders como:
-
-```text
-DIGITE-AQUI-O-NOME-DO-SEU-SCHEMA
-```
-
-e:
-
-```text
-COLOQUE-AQUI-SCHEMA
-```
-
-Antes de utilizá-las em um projeto real:
-
-1. defina o schema;
-2. substitua os placeholders;
-3. ajuste tabelas;
-4. ajuste colunas;
-5. crie policies;
-6. crie triggers;
-7. revise grants;
-8. teste com usuários diferentes;
-9. execute em ambiente de teste;
-10. somente depois aplique em produção.
-
----
-
-# 🔒 Row Level Security
-
-Habilitar RLS:
-
-```sql
-ALTER TABLE public.exemplo
-ENABLE ROW LEVEL SECURITY;
-```
-
-não é suficiente.
-
-Depois disso, policies precisam ser criadas.
-
-Sem policy adequada, usuários podem simplesmente perder acesso à tabela.
-
----
-
-# Exemplo conceitual
-
-```sql
-CREATE POLICY "user_can_read_own_data"
-ON public.profiles
-FOR SELECT
-TO authenticated
-USING (
-  id = auth.uid()
-);
-```
-
-Cada tabela deve ser analisada individualmente.
-
-Não copie policies cegamente entre tabelas.
-
----
-
-# 🧠 Regra para policies
-
-Pergunte sempre:
-
-```text
-QUEM
-pode fazer
-O QUÊ
-em
-QUAL REGISTRO?
-```
-
-Exemplo:
-
-```text
-cliente
-pode visualizar
-SELECT
-somente registros
-onde user_id = auth.uid()
-```
-
----
-
-# ⚠️ Nunca substituir policies sem revisão
-
-Ao adicionar uma nova policy:
-
-1. liste as policies existentes;
-2. identifique sua finalidade;
-3. verifique se alguma funcionalidade depende delas;
-4. adicione ou altere somente o necessário;
-5. teste todas as roles;
-6. nunca faça `DROP POLICY` indiscriminadamente.
-
----
-
-# 👤 Auth → tabela interna
-
-O Supabase Auth mantém identidade em:
-
-```text
-auth.users
-```
-
-A aplicação normalmente precisa de uma tabela própria:
-
-```text
-profiles
-```
-
-ou:
-
-```text
-usuarios
-```
-
-A base irá utilizar trigger para sincronizar a criação.
-
-Fluxo desejado:
-
-```text
-Supabase Auth
-     │
-     │ INSERT auth.users
-     ▼
-TRIGGER
-     │
-     ▼
-public.usuarios
-```
-
-## Regra
-
-Role administrativa nunca deve vir diretamente da escolha do usuário durante cadastro público.
-
-Cadastro público deve receber role segura padrão:
-
-```text
-cliente
-```
-
-Roles privilegiadas devem ser atribuídas somente por fluxo administrativo autorizado.
-
----
-
-# 🧾 Grants e Revokes — planejado
-
-Além de RLS, novos projetos devem revisar permissões do banco.
-
-Antes de produção verificar:
-
-```text
-anon
-authenticated
-service_role
-```
-
-e demais roles utilizadas.
-
-Princípio:
-
-```text
-deny by default
-allow explicitly
-```
-
----
-
-# 📤 Exportação
-
-Existe uma implementação de referência em:
-
-```text
-src/app/api/export/router.ts
-```
-
-Ela demonstra a ordem correta de segurança:
-
-```text
-JSON
- ↓
-Zod
- ↓
-Auth
- ↓
-Rate limit do usuário
- ↓
-Membership
- ↓
-Role
- ↓
-Rate limit do tenant
- ↓
-Consulta sujeita à RLS
- ↓
-Resposta
-```
-
-## ⚠️ Importante
-
-No App Router do Next.js, o arquivo efetivo deve ser:
-
-```text
-route.ts
-```
-
-Portanto, o exemplo atual não deve ser tratado como endpoint final enquanto estiver em:
-
-```text
-router.ts
-```
-
-Além disso, o exemplo utiliza entidades como:
-
-```text
-organization_members
-projects
-```
-
-que deverão ser criadas/adaptadas no projeto real.
-
----
-
-# HTTP 429
-
-Route Handlers devem retornar corretamente:
-
-```http
-429 Too Many Requests
-```
-
-e:
-
-```text
-Retry-After
-X-RateLimit-Limit
-X-RateLimit-Remaining
-X-RateLimit-Reset
-```
-
-O helper:
-
-```ts
-createRateLimitHeaders()
-```
-
-já existe para esse padrão.
-
----
-
-# 📂 Uploads — planejado
-
-Uploads nunca devem depender apenas de:
-
-```html
-accept="image/*"
-```
-
-A validação deverá ocorrer no servidor.
-
-Verificar:
-
-* tamanho;
-* MIME type;
-* extensão;
-* quantidade;
-* usuário;
-* tenant;
-* autorização;
-* nome do arquivo;
-* caminho no Storage;
-* tipo real do conteúdo quando necessário.
-
----
-
-# SVG
-
-SVG deve receber tratamento especial porque pode conter conteúdo ativo.
-
-Possíveis estratégias:
-
-```text
-1. bloquear completamente SVG
-```
-
-ou:
-
-```text
-2. sanitizar com biblioteca confiável
-```
-
-Nunca aceite SVG arbitrário como uma imagem comum.
-
----
-
-# Storage
-
-Estrutura conceitual:
-
-```text
-tenant-id/
-   user-id/
-      arquivo.ext
-```
-
-Policies de Storage também precisam ser revisadas.
-
-Não dependa apenas das policies das tabelas PostgreSQL.
-
----
-
-# 🤖 Cloudflare Turnstile — planejado
-
-Turnstile não terá chaves reais armazenadas nesta base.
-
-Em cada projeto derivado:
-
-1. criar o widget;
-2. obter Site Key;
-3. obter Secret Key;
-4. configurar variáveis de ambiente;
-5. configurar proteção no Supabase/Auth quando aplicável;
-6. adicionar widget ao fluxo público;
-7. validar token no servidor;
-8. testar em staging;
-9. somente depois habilitar em produção.
-
----
-
-# 🧾 Auditoria — planejado
-
-Operações sensíveis deverão produzir logs persistentes.
-
-Exemplo de eventos:
-
-```text
-auth.login.failed
-auth.login.rate_limited
-
-user.role.changed
-user.deleted
-
-project.deleted
-
-member.invited
-member.removed
-
-security.permission.changed
-
-export.created
-```
-
-Um log deve registrar, quando aplicável:
-
-```text
-event
-user_id
-tenant_id
-target_id
-ip/fingerprint
-timestamp
-metadata segura
-```
-
-Nunca registre:
-
-```text
-senha
-token
-secret
-cookie de sessão
-dados sensíveis completos
-```
-
----
-
-# 📋 Tabela de auditoria planejada
-
-Exemplo:
-
-```sql
-CREATE TABLE audit_logs (
-  id uuid PRIMARY KEY
-    DEFAULT gen_random_uuid(),
-
-  user_id uuid,
-
-  organization_id uuid,
-
-  event text NOT NULL,
-
-  target_type text,
-
-  target_id uuid,
-
-  metadata jsonb,
-
-  created_at timestamptz
-    NOT NULL DEFAULT now()
-);
-```
-
-A implementação final deverá definir:
-
-* quem pode inserir;
-* quem pode ler;
-* retenção;
-* acesso administrativo;
-* RLS;
-* prevenção contra alteração de logs.
-
----
-
-# 🧠 Enumeração de recursos
-
-Mensagens não devem revelar desnecessariamente se determinado recurso existe.
-
-Exemplo ruim:
-
-```text
-Este e-mail não está cadastrado.
-```
-
-Melhor:
-
-```text
-E-mail ou senha inválidos.
-```
-
-O login atual já utiliza resposta genérica.
-
-O mesmo princípio deve ser aplicado a:
-
-* reset de senha;
-* convites;
-* organizações;
-* usuários;
-* recursos privados.
-
----
-
-# 🔐 Reset de senha — planejado
-
-Fluxo futuro:
-
-```text
-email
- ↓
-Zod
- ↓
-IP
- ↓
-passwordReset rate limit
- ↓
-Turnstile
- ↓
-Supabase resetPasswordForEmail()
- ↓
-resposta genérica
-```
-
-Nunca confirmar publicamente se o e-mail existe.
-
----
-
-# ✉️ Convites — planejado
-
-Fluxo:
-
-```text
-auth
- ↓
-permission
- ↓
-Zod
- ↓
-invitation rate limit
- ↓
-verificar tenant
- ↓
-enviar convite
- ↓
-audit
-```
-
----
-
-# 🔐 Content Security Policy — planejado
-
-A configuração final deverá revisar:
-
-```text
-default-src
-script-src
-style-src
-img-src
-font-src
-connect-src
-frame-src
-object-src
-base-uri
-form-action
-frame-ancestors
-```
-
-Evite:
-
-```text
-unsafe-inline
-unsafe-eval
-*
-```
-
-sem justificativa técnica.
-
----
-
-# 🛡️ Security Headers — planejado
-
-Revisar:
-
-```text
-Content-Security-Policy
-Referrer-Policy
-Permissions-Policy
-X-Content-Type-Options
-Strict-Transport-Security
-```
-
-Alguns headers dependem da infraestrutura de deploy.
-
----
-
-# 🧪 Testes — planejado
-
-A base deverá possuir testes para:
-
-## Auth
-
-```text
-login válido
-login inválido
-cadastro
-logout
-sessão expirada
-```
-
-## Segurança
-
-```text
-usuário A não acessa dados de B
-cliente não executa ação de admin
-usuário não acessa outro tenant
-rate limit bloqueia corretamente
-redirect externo é rejeitado
-```
-
-## RLS
-
-Testar policies com:
-
-```text
-anon
-cliente
-admin
-tenant A
-tenant B
-```
-
----
-
-# 🔁 CI — planejado
-
-Pipeline mínima:
-
-```text
-push / pull request
-       │
-       ▼
-npm ci
-       │
-       ▼
-lint
-       │
-       ▼
-typecheck
-       │
-       ▼
-tests
-       │
-       ▼
-build
-```
-
-Nenhum deploy deve ser considerado válido se o build falhar.
-
----
-
-# 🌎 Ambientes
-
-Recomendação:
-
-```text
-LOCAL
-  ↓
-STAGING
-  ↓
-PRODUCTION
-```
-
-Nunca teste alterações estruturais de banco diretamente em produção.
-
-Cada ambiente deve possuir:
-
-* Supabase próprio;
-* banco próprio;
-* secrets próprios;
-* Redis/Upstash apropriado;
-* variáveis próprias.
-
----
-
-# 🚫 Produção não é ambiente de teste
-
-Não faça:
-
-```text
-alterar migration
-      ↓
-rodar produção
-      ↓
-ver se funciona
-```
-
-Faça:
-
-```text
-alterar
- ↓
-local
- ↓
-testes
- ↓
-staging
- ↓
-validação
- ↓
-produção
-```
-
----
-
-# 🔑 Secrets
-
-Nunca faça commit de:
-
-```text
-.env
-.env.local
-service role key
-secret key
-API token
-Redis token
-private key
-```
-
-Se um secret for enviado ao Git:
-
-1. considere comprometido;
-2. revogue;
-3. gere outro;
-4. remova do código;
-5. configure como secret da plataforma;
-6. avalie remoção do histórico Git.
-
-Somente apagar do último commit não torna um secret antigo seguro.
-
----
-
-# 🛠️ Como criar uma nova funcionalidade
-
-Exemplo:
-
-```text
-Criar gerenciamento de clientes
-```
-
-## Banco
-
-```text
-supabase/migrations/
-```
-
-Crie migration:
-
-```bash
-supabase migration new create_clients
-```
-
-Depois:
-
-```text
-CREATE TABLE
- ↓
-ENABLE RLS
- ↓
-POLICIES
- ↓
-INDEXES
- ↓
-GRANTS
-```
-
----
-
-## Validação
-
-Crie schema Zod.
-
-Exemplo:
-
-```text
-src/lib/validators/client.ts
-```
-
----
-
-## Server Action
-
-```text
-src/actions/clients.ts
-```
-
----
-
-## Fluxo
-
-```text
-input
- ↓
-zod
- ↓
-requireUser
- ↓
-requirePermission
- ↓
-rateLimit
- ↓
-supabase server
- ↓
-RLS
- ↓
-audit
- ↓
-revalidate
-```
-
----
-
-## UI
-
-Somente depois conecte:
-
-```text
-component
- ↓
-action
-```
-
-A UI não decide se uma operação é autorizada.
-
----
-
-# 🧩 Onde colocar cada coisa
-
-| Tipo                | Local                            |
-| ------------------- | -------------------------------- |
-| Server Action       | `src/actions/`                   |
-| Auth helper         | `src/lib/auth/`                  |
-| Rate limit          | `src/lib/security/`              |
-| Validators          | `src/lib/validators/`            |
-| Supabase server     | `src/lib/supabase/server.ts`     |
-| Supabase admin      | `src/lib/supabase/admin.ts`      |
-| Browser client      | `src/lib/supabase/supabase.ts`   |
-| Middleware Supabase | `src/lib/supabase/middleware.ts` |
-| Route Handler       | `src/app/api/**/route.ts`        |
-| Migration           | `supabase/migrations/`           |
-| Componentes UI      | `src/components/`                |
-| Tipos               | `src/types/`                     |
-
----
-
-# 🧱 Estrutura alvo
-
-Ao finalizar a base, a estrutura deve ficar próxima de:
-
-```text
-src/
-│
-├── actions/
-│   ├── auth.ts
-│   ├── profile.ts
-│   └── ...
-│
-├── app/
-│
-├── components/
-│
-├── lib/
-│   │
-│   ├── auth/
-│   │   ├── get-current-user.ts
-│   │   ├── require-user.ts
-│   │   ├── require-role.ts
-│   │   └── require-permission.ts
-│   │
-│   ├── audit/
-│   │   └── audit-log.ts
-│   │
-│   ├── security/
-│   │   ├── client-ip.ts
-│   │   ├── rate-limit.ts
-│   │   ├── upload.ts
-│   │   └── turnstile.ts
-│   │
-│   ├── supabase/
-│   │   ├── admin.ts
-│   │   ├── client.ts
-│   │   ├── middleware.ts
-│   │   └── server.ts
-│   │
-│   └── validators/
-│
-├── middleware.ts
-│
-└── types/
-
-supabase/
-│
-├── migrations/
-│
-└── config.toml
-
-.github/
-└── workflows/
-    └── ci.yml
-```
-
----
-
-# ✅ Checklist — criar novo projeto a partir desta base
-
-## Código
-
-* [ ] Criar novo repositório a partir da base
-* [ ] Alterar nome do projeto
-* [ ] Alterar metadata
-* [ ] Escolher npm ou pnpm
-* [ ] Remover lockfile não utilizado
-* [ ] Remover arquivos antigos/legados
-* [ ] Revisar dependências
-
-## Supabase
-
-* [ ] Criar projeto Supabase
-* [ ] Criar projeto separado para staging
-* [ ] Configurar URL
-* [ ] Configurar Publishable Key
-* [ ] Configurar Secret Key somente no servidor
-* [ ] Configurar Supabase CLI
-* [ ] Definir schema
-* [ ] Substituir placeholders das migrations
-* [ ] Criar tabelas
-* [ ] Criar índices
-* [ ] Habilitar RLS
-* [ ] Criar policies
-* [ ] Revisar grants/revokes
-* [ ] Criar triggers
-* [ ] Criar functions
-* [ ] Testar migration do zero
-* [ ] Testar policies com usuários diferentes
-
-## Auth
-
-* [ ] Configurar URL do projeto
-* [ ] Configurar redirect URLs
-* [ ] Definir política de senha
-* [ ] Definir confirmação de e-mail
-* [ ] Criar trigger Auth → profile
-* [ ] Garantir role padrão segura
-* [ ] Impedir role administrativa no cadastro público
-* [ ] Testar login
-* [ ] Testar cadastro
-* [ ] Testar logout
-* [ ] Testar sessão expirada
-
-## Upstash
-
-* [ ] Criar Redis
-* [ ] Configurar `UPSTASH_REDIS_REST_URL`
-* [ ] Configurar `UPSTASH_REDIS_REST_TOKEN`
-* [ ] Gerar `RATE_LIMIT_HASH_SECRET`
-* [ ] Revisar limites conforme o projeto
-* [ ] Testar HTTP 429
-
-## Infraestrutura
-
-* [ ] Definir local
-* [ ] Definir staging
-* [ ] Definir produção
-* [ ] Configurar secrets separadamente
-* [ ] Configurar `TRUSTED_CLIENT_IP_HEADER` quando necessário
-* [ ] Confirmar IP correto em produção
-
-## Turnstile
-
-* [ ] Criar widget Cloudflare Turnstile
-* [ ] Obter Site Key
-* [ ] Obter Secret Key
-* [ ] Configurar env
-* [ ] Integrar formulário
-* [ ] Validar token no servidor
-* [ ] Configurar integração com Auth quando utilizada
-* [ ] Testar staging
-
-## Storage
-
-* [ ] Criar buckets
-* [ ] Definir público ou privado
-* [ ] Criar policies de Storage
-* [ ] Definir limite de tamanho
-* [ ] Validar MIME
-* [ ] Validar extensão
-* [ ] Definir tratamento de SVG
-* [ ] Testar tentativa de acesso de outro usuário
-
-## Segurança
-
-* [ ] Revisar todas as Server Actions
-* [ ] Todas validam entrada?
-* [ ] Todas autenticam quando necessário?
-* [ ] Todas autorizam?
-* [ ] Rate limit aplicado onde necessário?
-* [ ] RLS está ativa?
-* [ ] Policies foram testadas?
-* [ ] Nenhuma operação comum usa admin client sem necessidade?
-* [ ] Erros não expõem banco?
-* [ ] Não existe enumeração?
-* [ ] Redirects estão protegidos?
-* [ ] CSP revisada?
-* [ ] Security headers configurados?
-* [ ] Secrets fora do Git?
-
-## Auditoria
-
-* [ ] Criar tabela de audit logs
-* [ ] Definir eventos
-* [ ] Definir retenção
-* [ ] Impedir alteração indevida
-* [ ] Não armazenar secrets
-* [ ] Registrar mutations sensíveis
-
-## Testes
-
-* [ ] Unit tests
-* [ ] Auth tests
-* [ ] Authorization tests
-* [ ] RLS tests
-* [ ] Rate limit tests
-* [ ] Upload tests
-* [ ] Build production
-
-## CI/CD
-
-* [ ] Criar workflow CI
-* [ ] Instalação limpa
-* [ ] Lint
-* [ ] TypeScript
-* [ ] Testes
-* [ ] Build
-* [ ] Bloquear merge quando CI falhar
-
-## Produção
-
-* [ ] Backup configurado
-* [ ] Logs configurados
-* [ ] Monitoramento configurado
-* [ ] Secrets de produção próprios
-* [ ] Banco separado de staging
-* [ ] Migration testada antes do deploy
-* [ ] Rollback planejado
-
----
-
-# 🚧 Roadmap da base
-
-## Segurança de aplicação
-
-* [x] Server Actions para autenticação
-* [x] Zod
-* [x] Rate limiting
-* [x] HMAC para identificadores
-* [x] IP confiável
-* [x] Middleware
-* [ ] Helpers de autorização
-* [ ] Auditoria persistente
-* [ ] Turnstile
-* [ ] CSP
-* [ ] Security headers
-* [ ] Upload validation
-* [ ] Storage seguro
-
-## Banco
-
-* [x] Estrutura de migrations
-* [x] Template para habilitar RLS
-* [ ] Schema definitivo da base
-* [ ] Trigger Auth → usuário
-* [ ] Policies completas
-* [ ] Grants/revokes
-* [ ] Functions auxiliares
-* [ ] Testes automatizados de RLS
-
-## Infraestrutura
-
-* [x] Upstash Redis
-* [ ] CI
-* [ ] Testes
-* [ ] Observabilidade
-* [ ] Documentação de deploy
-* [ ] Estratégia de backup
-* [ ] Estratégia de rollback
-
----
-
-# 🎯 Objetivo final
-
-O objetivo deste projeto é permitir que um novo SaaS comece com uma arquitetura semelhante a:
-
-```text
-                    ┌─────────────┐
-                    │   Browser   │
-                    └──────┬──────┘
-                           │
-                           ▼
-                    ┌─────────────┐
-                    │  Next.js    │
-                    │ Server      │
-                    └──────┬──────┘
-                           │
-              ┌────────────┼────────────┐
-              │            │            │
-              ▼            ▼            ▼
-           AUTH        RATE LIMIT   VALIDATION
-              │            │            │
-              └────────────┼────────────┘
-                           │
-                           ▼
-                    AUTHORIZATION
-                           │
-                           ▼
-                    SUPABASE SSR
-                           │
-                           ▼
-                       POSTGRES
-                           │
-                           ▼
-                          RLS
-                           │
-                           ▼
-                        POLICY
-```
-
-A segurança não deve depender de uma única camada.
-
-O objetivo é aplicar **defesa em profundidade**:
-
-```text
-UI
-+
-Server Actions
-+
-Authentication
-+
-Authorization
-+
-Rate Limiting
-+
-Validation
-+
-RLS
-+
-Policies
-+
-Audit
-+
-Infrastructure
-```
-
----
-
-# 📄 Licença
-
-Apache 2.0.
-
----
-
-# 👨‍💻 Autor
-
-**Jason Tralli**
-
-GitHub: `@JTrallii`
-
----
-
-> **Software não precisa apenas funcionar.**
->
-> **Precisa continuar funcionando quando o sistema evolui.**
+Este projeto está sob a licença Apache 2.0. Consulte LICENSE para o texto integral.
